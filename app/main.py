@@ -855,7 +855,7 @@ def save_drive_credentials(payload: dict):
 
 @app.get("/api/sync/drive/auth")
 def drive_auth(request: Request):
-    from app.services.sync_service import CREDS_PATH
+    from app.services.sync_service import CREDS_PATH, _MEMORY_CONFIG
     if not CREDS_PATH.exists():
         raise HTTPException(status_code=400, detail="No se encuentra credentials.json. Súbelo primero en la configuración.")
     
@@ -874,12 +874,16 @@ def drive_auth(request: Request):
         prompt="consent",
         include_granted_scopes="true"
     )
+    # Guardar el code_verifier generado en memoria usando el state como clave para el callback
+    if hasattr(flow, "code_verifier") and flow.code_verifier:
+        _MEMORY_CONFIG[f"oauth_verifier_{state}"] = flow.code_verifier
+        
     from fastapi.responses import RedirectResponse
     return RedirectResponse(auth_url)
 
 @app.get("/api/sync/drive/callback")
-def drive_callback(request: Request, code: str):
-    from app.services.sync_service import CREDS_PATH
+def drive_callback(request: Request, code: str, state: str = None):
+    from app.services.sync_service import CREDS_PATH, _MEMORY_CONFIG
     if not CREDS_PATH.exists():
         raise HTTPException(status_code=400, detail="No se encuentra credentials.json")
         
@@ -890,11 +894,17 @@ def drive_callback(request: Request, code: str):
     host = request.headers.get("host", "localhost:8000")
     redirect_uri = f"{scheme}://{host}/api/sync/drive/callback"
     
+    # Recuperar el code_verifier usando el parámetro state
+    code_verifier = None
+    if state:
+        code_verifier = _MEMORY_CONFIG.pop(f"oauth_verifier_{state}", None)
+        
     try:
         flow = Flow.from_client_secrets_file(
             str(CREDS_PATH),
             scopes=["https://www.googleapis.com/auth/drive"],
-            redirect_uri=redirect_uri
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier
         )
         flow.fetch_token(code=code)
         creds = flow.credentials
