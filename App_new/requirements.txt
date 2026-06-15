@@ -1,0 +1,7 @@
+pyside6>=6.5
+google-api-python-client>=2.0
+google-auth-oauthlib>=1.0
+PyGithub>=2.0
+requests>=2.0
+fastapi>=0.100.0
+uvicorn>=0.22.0

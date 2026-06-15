@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Visualizador</title>
+  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="../editor/lib/github.min.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      overflow: hidden;
+    }
+    #visualizer-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    /* Styles matching the custom PDF viewer */
+    #vis-pdf-container {
+      display: none;
+      width: 100%;
+      height: 100%;
+      flex-direction: column;
+    }
+    .pdf-controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: var(--radius) var(--radius) 0 0;
+      box-sizing: border-box;
+      flex-wrap: wrap;
+    }
+    #pdf-scroll-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      border: 1px solid var(--border);
+      border-radius: 0 0 var(--radius) var(--radius);
+      box-sizing: border-box;
+    }
+    .pdf-page-wrapper {
+      background: var(--bg-card);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 8px;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    .pdf-page-wrapper canvas {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      border-radius: var(--radius);
+    }
+    .btn-icon:hover {
+      background: var(--hover) !important;
+      color: var(--accent);
+    }
+    #vis-video-container, #vis-image-container, #vis-audio-container {
+      display: none;
+      width: 100%;
+      height: 100%;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      box-sizing: border-box;
+    }
+    #vis-video-container {
+      background: #000;
+    }
+    #vis-video-player, #vis-audio-player {
+      max-width: 100%;
+      max-height: 100%;
+      outline: none;
+    }
+    #vis-audio-player {
+      width: 80%;
+    }
+    #vis-image-preview {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    #vis-code-container, #vis-notebook-container {
+      display: none;
+      width: 100%;
+      height: 100%;
+      box-sizing: border-box;
+    }
+    #vis-code-block-pre {
+      margin: 0;
+      padding: 12px;
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: auto;
+      height: 100%;
+      box-sizing: border-box;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    #vis-notebook-container {
+      overflow-y: auto;
+      padding: 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .ipynb-cell {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg);
+      padding: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .ipynb-cell-prompt {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      user-select: none;
+    }
+    .ipynb-cell-code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      background: var(--bg-card) !important;
+      padding: 8px 12px;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin: 0 0 8px 0;
+    }
+  </style>
+</head>
+<body>
+  <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 8px; height: 32px; box-sizing: border-box;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <span id="visualizer-icon" style="font-size: 18px;">👁️</span>
+      <span id="visualizer-name" style="font-weight: 600; color: var(--text); font-size: 14px;">Cargando...</span>
+    </div>
+    <div style="display: flex; gap: 8px;">
+      <button onclick="window.close()" style="background: none; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 4px 8px; cursor: pointer; font-size: 11px;" title="Cerrar ventana">✕ Cerrar</button>
+    </div>
+  </div>
+
+  <div id="visualizer-content">
+    <!-- PDF Viewer -->
+    <div id="vis-pdf-container">
+      <div class="pdf-controls">
+        <button onclick="pdfZoomOut()" class="btn-icon" title="Alejar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➖</button>
+        <span id="pdf-zoom-percent" style="font-size: 12px; min-width: 50px; text-align: center; color: var(--text); font-weight: 500;">100%</span>
+        <button onclick="pdfZoomIn()" class="btn-icon" title="Acercar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➕</button>
+        <button onclick="pdfZoomFit()" class="btn-icon" title="Ajustar ancho" style="background: none; border: none; font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">↕️ Ajustar</button>
+        <span style="border-left: 1px solid var(--border); height: 16px; margin: 0 8px;"></span>
+        <span id="pdf-page-info" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Páginas: --</span>
+      </div>
+      <div id="pdf-scroll-area"></div>
+    </div>
+
+    <!-- Video Player -->
+    <div id="vis-video-container">
+      <video id="vis-video-player" controls></video>
+    </div>
+
+    <!-- Image Viewer -->
+    <div id="vis-image-container">
+      <img id="vis-image-preview" src="" />
+    </div>
+
+    <!-- Code Viewer -->
+    <div id="vis-code-container">
+      <pre id="vis-code-block-pre"><code id="vis-code-block" class="hljs"></code></pre>
+    </div>
+
+    <!-- Jupyter Notebook Viewer -->
+    <div id="vis-notebook-container">
+      <div id="vis-notebook-cells" style="max-width: 850px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;"></div>
+    </div>
+
+    <!-- Audio Player -->
+    <div id="vis-audio-container">
+      <audio id="vis-audio-player" controls></audio>
+    </div>
+
+    <!-- Generic Fallback Viewer -->
+    <div id="vis-generic-container" style="padding: 40px; text-align: center; gap: 16px;">
+      <div style="font-size: 64px;">📦</div>
+      <h3 id="vis-generic-name" style="margin:0; font-size:18px; color:var(--text)">—</h3>
+      <p style="font-size:13px; color:var(--text-muted); max-width:400px; margin:0">Este archivo se abrió correctamente en una ventana externa.</p>
+    </div>
+  </div>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="../editor/lib/pdf.min.js"></script>
+  <script src="../editor/lib/highlight.min.js"></script>
+  <script>
+    let bridge = null;
+    let currentPdfDoc = null;
+    let currentPdfScale = 1.25;
+    let currentPdfFileUrl = "";
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const filePath = urlParams.get('path');
+    const fileName = urlParams.get('name');
+    const fileType = urlParams.get('type');
+
+    document.getElementById("visualizer-name").textContent = fileName || "Visualizador";
+    
+    // Set icon based on type
+    const icons = {
+      pdf: "📕",
+      image: "🖼️",
+      video: "🎥",
+      audio: "🎵",
+      notebook: "📓",
+      code: "💻",
+      generic: "📦"
+    };
+    document.getElementById("visualizer-icon").textContent = icons[fileType] || "👁️";
+
+    const fileUrl = "file:///" + filePath.replace(/\\/g, "/");
+
+    function hideAll() {
+      document.getElementById("vis-pdf-container").style.display = "none";
+      document.getElementById("vis-video-container").style.display = "none";
+      document.getElementById("vis-image-container").style.display = "none";
+      document.getElementById("vis-code-container").style.display = "none";
+      document.getElementById("vis-notebook-container").style.display = "none";
+      document.getElementById("vis-audio-container").style.display = "none";
+      document.getElementById("vis-generic-container").style.display = "none";
+    }
+
+    hideAll();
+
+    if (fileType === "pdf") {
+      document.getElementById("vis-pdf-container").style.display = "flex";
+      renderPdf(fileUrl);
+    } else if (fileType === "video") {
+      document.getElementById("vis-video-container").style.display = "flex";
+      const player = document.getElementById("vis-video-player");
+      player.src = fileUrl;
+      player.load();
+    } else if (fileType === "image") {
+      document.getElementById("vis-image-container").style.display = "flex";
+      document.getElementById("vis-image-preview").src = fileUrl;
+    } else if (fileType === "audio") {
+      document.getElementById("vis-audio-container").style.display = "flex";
+      const player = document.getElementById("vis-audio-player");
+      player.src = fileUrl;
+      player.load();
+    } else if (fileType === "code" || fileType === "notebook") {
+      if (typeof qt !== 'undefined') {
+        new QWebChannel(qt.webChannelTransport, function(channel) {
+          bridge = channel.objects.bridge;
+          loadFileContent();
+        });
+      } else {
+        fetch(fileUrl)
+          .then(r => r.text())
+          .then(content => renderContent(content))
+          .catch(e => console.error("Fetch local file failed", e));
+      }
+    } else {
+      document.getElementById("vis-generic-container").style.display = "flex";
+      document.getElementById("vis-generic-name").textContent = fileName;
+    }
+
+    function loadFileContent() {
+      if (bridge) {
+        bridge.getFileBase64(filePath, function(base64Data) {
+          if (!base64Data) {
+            renderContent("");
+            return;
+          }
+          try {
+            const binString = atob(base64Data);
+            const bytes = new Uint8Array(binString.length);
+            for (let i = 0; i < binString.length; i++) {
+              bytes[i] = binString.charCodeAt(i);
+            }
+            const content = new TextDecoder("utf-8").decode(bytes);
+            renderContent(content);
+          } catch(e) {
+            console.error("Decode error", e);
+            renderContent("[Error al decodificar archivo]");
+          }
+        });
+      }
+    }
+
+    function renderContent(content) {
+      if (fileType === "code") {
+        document.getElementById("vis-code-container").style.display = "block";
+        const codeBlock = document.getElementById("vis-code-block");
+        codeBlock.textContent = content || "";
+        codeBlock.className = "hljs";
+        if (typeof hljs !== 'undefined') {
+          hljs.highlightElement(codeBlock);
+        }
+      } else if (fileType === "notebook") {
+        document.getElementById("vis-notebook-container").style.display = "block";
+        renderNotebook(content);
+      }
+    }
+
+    function renderPdf(fileUrl) {
+      currentPdfFileUrl = fileUrl;
+      const scrollArea = document.getElementById("pdf-scroll-area");
+      scrollArea.innerHTML = "<div style='color: var(--text-muted); padding: 20px; font-size: 14px;'>⏳ Cargando PDF...</div>";
+      document.getElementById("pdf-page-info").textContent = "Páginas: --";
+      
+      if (typeof pdfjsLib === 'undefined') {
+        scrollArea.innerHTML = "<div style='color: #ef4444; padding: 20px;'>Error: PDF.js no cargado.</div>";
+        return;
+      }
+      
+      pdfjsLib.GlobalWorkerOptions.workerSrc = '../editor/lib/pdf.worker.min.js';
+      
+      pdfjsLib.getDocument(fileUrl).promise.then(function(pdf) {
+        currentPdfDoc = pdf;
+        scrollArea.innerHTML = "";
+        document.getElementById("pdf-page-info").textContent = "Páginas: " + pdf.numPages;
+        document.getElementById("pdf-zoom-percent").textContent = Math.round(currentPdfScale * 100) + "%";
+        
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+          const pageWrapper = document.createElement("div");
+          pageWrapper.className = "pdf-page-wrapper";
+          pageWrapper.dataset.pageNum = pageNum;
+          pageWrapper.style.marginBottom = "16px";
+          
+          const canvas = document.createElement("canvas");
+          pageWrapper.appendChild(canvas);
+          scrollArea.appendChild(pageWrapper);
+          
+          renderPdfPage(pdf, pageNum, canvas);
+        }
+      }).catch(function(error) {
+        console.error("Error al cargar PDF:", error);
+        scrollArea.innerHTML = "<div style='color: #ef4444; padding: 20px;'>Error al cargar el PDF: " + error.message + "</div>";
+      });
+    }
+
+    function renderPdfPage(pdf, pageNum, canvas) {
+      pdf.getPage(pageNum).then(function(page) {
+        const ctx = canvas.getContext('2d');
+        const viewport = page.getViewport({ scale: currentPdfScale });
+        
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = viewport.width * dpr;
+        canvas.height = viewport.height * dpr;
+        canvas.style.width = viewport.width + "px";
+        canvas.style.height = viewport.height + "px";
+        
+        ctx.scale(dpr, dpr);
+        
+        const renderContext = {
+          canvasContext: ctx,
+          viewport: viewport
+        };
+        
+        page.render(renderContext);
+      });
+    }
+
+    function pdfZoomIn() {
+      if (!currentPdfDoc) return;
+      if (currentPdfScale >= 3.0) return;
+      currentPdfScale += 0.25;
+      reRenderPdf();
+    }
+
+    function pdfZoomOut() {
+      if (!currentPdfDoc) return;
+      if (currentPdfScale <= 0.5) return;
+      currentPdfScale -= 0.25;
+      reRenderPdf();
+    }
+
+    function pdfZoomFit() {
+      if (!currentPdfDoc) return;
+      
+      currentPdfDoc.getPage(1).then(function(page) {
+        const scrollArea = document.getElementById("pdf-scroll-area");
+        const containerWidth = scrollArea.clientWidth - 48;
+        const viewport = page.getViewport({ scale: 1.0 });
+        currentPdfScale = containerWidth / viewport.width;
+        
+        currentPdfScale = Math.max(0.5, Math.min(2.5, currentPdfScale));
+        reRenderPdf();
+      });
+    }
+
+    function reRenderPdf() {
+      if (!currentPdfDoc) return;
+      document.getElementById("pdf-zoom-percent").textContent = Math.round(currentPdfScale * 100) + "%";
+      const wrappers = document.querySelectorAll(".pdf-page-wrapper");
+      wrappers.forEach(function(wrapper) {
+        const pageNum = parseInt(wrapper.dataset.pageNum);
+        const canvas = wrapper.querySelector("canvas");
+        if (canvas) {
+          renderPdfPage(currentPdfDoc, pageNum, canvas);
+        }
+      });
+    }
+
+    function renderNotebook(jsonStr) {
+      const container = document.getElementById("vis-notebook-cells");
+      container.innerHTML = "";
+      
+      try {
+        const nb = JSON.parse(jsonStr);
+        const cells = nb.cells || [];
+        
+        cells.forEach(function(cell, idx) {
+          const cellDiv = document.createElement("div");
+          cellDiv.className = "ipynb-cell";
+          
+          const type = cell.cell_type;
+          const sourceLines = cell.source || [];
+          const sourceText = Array.isArray(sourceLines) ? sourceLines.join("") : sourceLines;
+          
+          if (type === "markdown") {
+            const prompt = document.createElement("div");
+            prompt.className = "ipynb-cell-prompt";
+            prompt.textContent = `Markdown [${idx}]`;
+            cellDiv.appendChild(prompt);
+            
+            const mdDiv = document.createElement("div");
+            mdDiv.style.color = "var(--text)";
+            mdDiv.style.fontSize = "14px";
+            mdDiv.textContent = sourceText;
+            cellDiv.appendChild(mdDiv);
+          } else if (type === "code") {
+            const prompt = document.createElement("div");
+            prompt.className = "ipynb-cell-prompt";
+            const execCount = cell.execution_count !== null ? cell.execution_count : " ";
+            prompt.textContent = `In [${execCount}]:`;
+            cellDiv.appendChild(prompt);
+            
+            const codeBlock = document.createElement("pre");
+            codeBlock.className = "ipynb-cell-code hljs";
+            codeBlock.textContent = sourceText;
+            if (typeof hljs !== 'undefined') {
+              hljs.highlightElement(codeBlock);
+            }
+            cellDiv.appendChild(codeBlock);
+            
+            const outputs = cell.outputs || [];
+            outputs.forEach(function(out) {
+              const outDiv = document.createElement("div");
+              outDiv.style.marginTop = "8px";
+              outDiv.style.fontSize = "12px";
+              outDiv.style.fontFamily = "var(--font-mono)";
+              
+              if (out.output_type === "stream") {
+                const textLines = out.text || [];
+                const pre = document.createElement("pre");
+                pre.style.margin = "0";
+                pre.style.color = "var(--text-muted)";
+                pre.textContent = Array.isArray(textLines) ? textLines.join("") : textLines;
+                outDiv.appendChild(pre);
+              } else if (out.output_type === "execute_result" || out.output_type === "display_data") {
+                const data = out.data || {};
+                if (data["image/png"]) {
+                  const img = document.createElement("img");
+                  img.src = "data:image/png;base64," + data["image/png"].trim();
+                  img.style.maxWidth = "100%";
+                  outDiv.appendChild(img);
+                } else if (data["text/plain"]) {
+                  const plainLines = data["text/plain"];
+                  const pre = document.createElement("pre");
+                  pre.style.margin = "0";
+                  pre.style.color = "var(--text-muted)";
+                  pre.textContent = Array.isArray(plainLines) ? plainLines.join("") : plainLines;
+                  outDiv.appendChild(pre);
+                }
+              }
+              cellDiv.appendChild(outDiv);
+            });
+          }
+          container.appendChild(cellDiv);
+        });
+      } catch(e) {
+        container.innerHTML = "<div style='color:red;'>Error al renderizar notebook: " + e.message + "</div>";
+      }
+    }
+  </script>
+</body>
+</html>

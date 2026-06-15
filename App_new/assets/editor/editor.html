@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Editor MD</title>
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="lib/toastui-editor.css">
+  <link rel="stylesheet" href="editor.css">
+  
+  <!-- External CDN Libraries for Mermaid & Zoom -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@9.4.3/dist/mermaid.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.396.0/dist/umd/lucide.min.js"></script>
+</head>
+<body>
+  <div id="editorWrap">
+    <div id="toolbar">
+      <span id="fileName">—</span>
+      <span id="saveStatus"></span>
+    </div>
+    <div id="editor"></div>
+  </div>
+
+  <!-- Custom Mermaid Integration Modal Overlay -->
+  <div id="mermaidModal" class="mermaid-modal hidden">
+    <div class="mermaid-modal-content">
+      <header class="modal-header">
+        <div class="modal-title-area">
+          <i data-lucide="git-fork" class="modal-title-icon"></i>
+          <span class="modal-title">Mermaid Canvas — Integración</span>
+        </div>
+        <div class="modal-header-actions">
+          <button id="btn-modal-cancel" class="modal-btn btn-secondary-modal" title="Cancelar cambios">
+            <i data-lucide="x"></i>
+            <span>Cancelar</span>
+          </button>
+          <button id="btn-modal-insert" class="modal-btn btn-primary-modal" title="Inyectar bloque en nota">
+            <i data-lucide="check"></i>
+            <span>Insertar en Nota</span>
+          </button>
+        </div>
+      </header>
+      <div class="modal-body">
+        <!-- Sidebar Templates Bar -->
+        <aside class="modal-sidebar">
+          <div class="sidebar-header">
+            <i data-lucide="layout-template"></i>
+            <h3>Plantillas</h3>
+          </div>
+          <div class="templates-list" id="modal-templates-container">
+            <!-- Dynamically populated by editor.js -->
+          </div>
+        </aside>
+        
+        <!-- Main Workspace -->
+        <div class="modal-workspace">
+          <!-- Code Editor Panel -->
+          <div class="modal-pane pane-editor">
+            <div class="pane-header">
+              <div class="pane-title">
+                <i data-lucide="code-2"></i>
+                <span>Editor de Código</span>
+              </div>
+            </div>
+            <div class="editor-container-wrapper">
+              <div class="line-numbers-gutter" id="modal-line-numbers">1</div>
+              <textarea id="modal-code-editor" spellcheck="false" placeholder="Escribe tu código Mermaid aquí..."></textarea>
+            </div>
+          </div>
+          
+          <!-- Graphic Preview Panel -->
+          <div class="modal-pane pane-preview">
+            <div class="pane-header">
+              <div class="pane-title">
+                <i data-lucide="eye"></i>
+                <span>Vista Gráfica</span>
+              </div>
+              <div class="preview-actions">
+                <button id="btn-modal-zoom-in" class="btn-icon-small" title="Acercar">
+                  <i data-lucide="zoom-in"></i>
+                </button>
+                <button id="btn-modal-zoom-out" class="btn-icon-small" title="Alejar">
+                  <i data-lucide="zoom-out"></i>
+                </button>
+                <button id="btn-modal-zoom-reset" class="btn-icon-small" title="Centrar">
+                  <i data-lucide="maximize"></i>
+                </button>
+              </div>
+            </div>
+            <div class="preview-container-wrapper">
+              <!-- Error Banner -->
+              <div id="modal-error-banner" class="modal-error-banner hidden">
+                <div class="error-header">
+                  <i data-lucide="alert-circle"></i>
+                  <h4>Error de Renderizado</h4>
+                </div>
+                <pre id="modal-error-message" class="error-message"></pre>
+              </div>
+              
+              <!-- Render Target -->
+              <div id="modal-mermaid-render-target" class="render-canvas"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="lib/toastui-editor.js"></script>
+  <script src="editor.js"></script>
+</body>
+</html>

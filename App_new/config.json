@@ -1,0 +1,49 @@
+{
+  "roots": [
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair"
+  ],
+  "last_root": "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair",
+  "expanded_states": {
+    "github://": true,
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair\\01_Container_Repair_Reefer\\01_Container_Repair_Reefer": false,
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair\\02_Container_Repair_Secos\\02_Container_Repair_Secos": true,
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair\\02_Container_Repair_Secos\\02_Container_Repair_Secos\\PENDIENTES": true,
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair\\02_Container_Repair_Secos\\02_Container_Repair_Secos\\3_Dashboards\\REPORTE\\N4": true,
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair\\02_Container_Repair_Secos\\02_Container_Repair_Secos\\3_Dashboards\\REPORTE\\N4\\GateOUT": false,
+    "C:\\Users\\ejamanca\\Documents\\Proyecto\\Container_Repair\\02_Container_Repair_Secos\\02_Container_Repair_Secos\\3_Dashboards\\REPORTE\\N4\\GateIN": false,
+    "github://repo/sahid1129/Notas_Trabajo": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/01_Mantenimiento_y_Reparacion": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/01_Mantenimiento_y_Reparacion/02_Container_Repair_Secos": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/01_Mantenimiento_y_Reparacion/02_Container_Repair_Secos/PENDIENTES": true,
+    "github://repo/sahid1129/sahid_repositorio": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/03_Servicios_Portuarios_y_Logistica": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/99_Recursos_y_Catalogos": false,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/03_Servicios_Portuarios_y_Logistica/02_Integral_Service": true,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/01_Mantenimiento_y_Reparacion/02_Container_Repair_Secos/3_Dashboards": false,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/04_Servicios_Soporte_y_Admin": false,
+    "github://dir/sahid1129/Notas_Trabajo/Wiki_Estudio_Jun_26/02_Operaciones_Cuadrillas": true,
+    "drive://": true,
+    "drive://folder/1njL1C2MAi8jYkFN1EBfGhkWckIgwR9cQZwE44YOmbTolzpsWMf4sqzLRlrtcRV29oxjEgmNw": false,
+    "drive://folder/1Gcv9UbuBQG_aO69kDTaaOvsBqORj8hrQa_qooBzY-RJ7XGLL3E2xQdL2Ujchcm_6iISCd3cZ": false,
+    "drive://folder/1g-KF52CKPjgiAnrUxqHYDx4_X32CDe5Y": true,
+    "drive://folder/11a4nSVuVsalENTAHSZ7aLWtyE08E9zjV": false,
+    "drive://folder/1M-qLi-Doodp2_0hwBNhOCyOKtc5XKyul": true,
+    "drive://folder/1MNbnJ2adpyvf_EbW8ie7AlUPJmcuD--Y": true,
+    "drive://folder/1CevzPe9JRf0VsrsrmltHKTmk8XZP6iwS": false
+  },
+  "deepseek_api_key": "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",
+  "active_ai_provider": "deepseek",
+  "gemini_api_key": "Error: Error de conexión con la IA: HTTP Error 404: Not Found",
+  "gemini_model": "gemini-flash-latest",
+  "active_remote_source": "github",
+  "github_selected_repo": "sahid1129/Notas_Trabajo",
+  "last_editor_file": "E:\\Works_Rom\\PROYECTOS IA\\App_notas_V3\\app_funcional\\_temp_files\\github\\sahid1129\\Notas_Trabajo\\Wiki_Estudio_Jun_26\\01_Mantenimiento_y_Reparacion\\02_Container_Repair_Secos\\PENDIENTES\\cuenta contenedores.md",
+  "last_editor_source": "github",
+  "last_editor_info": {
+    "source": "github",
+    "remote_repo": "sahid1129/Notas_Trabajo",
+    "remote_id": "Wiki_Estudio_Jun_26/01_Mantenimiento_y_Reparacion/02_Container_Repair_Secos/PENDIENTES/cuenta contenedores.md",
+    "sha": "92051dfd90e5be23db9da05ff1dee048b166cd28"
+  }
+}
