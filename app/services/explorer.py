@@ -221,7 +221,6 @@ class ExplorerService:
                         "_expanded": False, 
                         "children": []
                     }
-                    self._populate_drive_subtree(folder_node, fid)
                     parent_node["children"].append(folder_node)
                 else:
                     icon, color = self._icon_for_ext(ext)
@@ -251,7 +250,6 @@ class ExplorerService:
                         "_expanded": False, 
                         "children": []
                     }
-                    self._populate_github_subtree(dir_node, repo, fp)
                     parent_node["children"].append(dir_node)
                 elif entry[0] == "file":
                     _, name, fp, sha = entry

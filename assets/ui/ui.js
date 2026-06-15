@@ -254,6 +254,7 @@ function renderTree(data) {
 }
 
 function buildTreeNode(node, depth) {
+  node._depth = depth;
   var div = document.createElement("div");
   div.className = "tree-item";
   div.dataset.path = node.path || "";
@@ -368,20 +369,117 @@ function toggleBranch(toggleEl, node) {
   toggleEl.classList.toggle("expanded");
   var container = toggleEl.parentElement.parentElement.querySelector(".tree-children");
   if (container) container.classList.toggle("open");
-  if (node._expanded && (!node.children || node.children.length === 0)) {
-    if (node._type === "drive") {
-      bridge.syncDrive();
-    } else if (node._type === "github") {
-      bridge.syncGithub("");
-    } else if (node._type === "drive_folder") {
-      bridge.driveFolderClicked(node.path, node.remoteId);
-    } else if (node._type === "github_repo" || node._type === "dir") {
-      bridge.githubBrowse(node.repo, node.path);
+  
+  if (node._expanded && (!node.children || node.children.length === 0 || !node._loaded)) {
+    if (node._type === "drive" || node._type === "drive_folder" || node._type === "github_repo" || node._type === "dir") {
+      lazyLoadTreeChildren(node, container, toggleEl);
     }
   }
   if (bridge) {
     bridge.setFolderExpanded(getNodeKey(node), node._expanded);
   }
+}
+
+function lazyLoadTreeChildren(node, containerEl, toggleEl) {
+  if (node._loaded) return;
+  
+  containerEl.innerHTML = "";
+  var loadingEl = document.createElement("div");
+  loadingEl.style.padding = "4px 8px";
+  loadingEl.style.paddingLeft = (8 + (node._depth + 1) * 18) + "px";
+  loadingEl.style.color = "var(--text-muted)";
+  loadingEl.style.fontStyle = "italic";
+  loadingEl.textContent = "⏳ Cargando...";
+  containerEl.appendChild(loadingEl);
+  
+  var url = "";
+  if (node._type === "drive" || node._type === "drive_folder") {
+    var folderId = node._type === "drive" ? (window.appConfig && window.appConfig.drive_base_folder_id || "root") : node.remoteId;
+    url = API_BASE_URL + "/api/sync/drive/files?folder_id=" + encodeURIComponent(folderId);
+  } else if (node._type === "github_repo" || node._type === "dir") {
+    var repo = node.repo;
+    var path = node._type === "github_repo" ? (node.path || "") : node.path;
+    url = API_BASE_URL + "/api/sync/github/files?repo=" + encodeURIComponent(repo) + "&path=" + encodeURIComponent(path);
+  } else {
+    return;
+  }
+  
+  fetch(url)
+    .then(r => r.json())
+    .then(data => {
+      containerEl.innerHTML = "";
+      node.children = [];
+      node._loaded = true;
+      
+      if (data.success && data.files && data.files.length > 0) {
+        data.files.forEach(function(f) {
+          var childNode = {};
+          if (node._type === "drive" || node._type === "drive_folder") {
+            var isFolder = f[0] === "folder";
+            var icon = isFolder ? "📁" : "📎";
+            var ext = f[4] || "";
+            var color = "#6b7280";
+            if (ext === ".md") color = "#2563eb";
+            else if (ext === ".pdf") color = "#dc2626";
+            else if (ext === ".xlsx" || ext === ".csv") color = "#16a34a";
+            else if (ext === ".png" || ext === ".jpg" || ext === ".jpeg") color = "#9333ea";
+            
+            childNode = {
+              name: isFolder ? "📁 " + f[1] : icon + " " + f[1],
+              _type: isFolder ? "drive_folder" : "drive_file",
+              path: isFolder ? "drive://folder/" + f[2] : "drive://file/" + f[2],
+              remoteId: f[2],
+              remoteName: f[1],
+              color: color,
+              children: isFolder ? [] : undefined
+            };
+          } else {
+            var isFolder = f[0] === "dir";
+            var name = f[1];
+            var fp = f[2];
+            var sha = f[3] || "";
+            var color = isFolder ? "#7c3aed" : "#6b7280";
+            var ext = name.split('.').pop().toLowerCase();
+            if (!isFolder) {
+              if (ext === "md") color = "#2563eb";
+              else if (ext === "pdf") color = "#dc2626";
+              else if (ext === "xlsx" || ext === "csv") color = "#16a34a";
+              else if (["png", "jpg", "jpeg"].includes(ext)) color = "#9333ea";
+            }
+            
+            childNode = {
+              name: isFolder ? "📁 " + name : "📄 " + name,
+              _type: isFolder ? "dir" : "github_file",
+              repo: node.repo,
+              path: fp,
+              sha: sha,
+              remoteName: name,
+              color: color,
+              children: isFolder ? [] : undefined
+            };
+          }
+          
+          node.children.push(childNode);
+          containerEl.appendChild(buildTreeNode(childNode, node._depth + 1));
+        });
+      } else {
+        var emptyEl = document.createElement("div");
+        emptyEl.style.padding = "4px 8px";
+        emptyEl.style.paddingLeft = (8 + (node._depth + 1) * 18) + "px";
+        emptyEl.style.color = "var(--text-muted)";
+        emptyEl.textContent = "(Vacío)";
+        containerEl.appendChild(emptyEl);
+      }
+    })
+    .catch(err => {
+      containerEl.innerHTML = "";
+      var errEl = document.createElement("div");
+      errEl.style.padding = "4px 8px";
+      errEl.style.paddingLeft = (8 + (node._depth + 1) * 18) + "px";
+      errEl.style.color = "#ef4444";
+      errEl.textContent = "⚠️ Error: " + err.message;
+      containerEl.appendChild(errEl);
+    });
 }
 
 function updateTreeSelection(path) {
