@@ -42,9 +42,25 @@ window.fetch = function (input, init) {
     const gemModel = localStorage.getItem("gemini_model");
     if (gemModel) setHeader("X-Gemini-Model", gemModel);
 
+    const sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
+    if (sessionToken) setHeader("X-Session-Token", sessionToken);
+
     init.headers = headers;
   }
-  return originalFetch(input, init);
+  return originalFetch(input, init).then(response => {
+    if (response.status === 401) {
+      if (!url.includes("/api/auth/login") && !url.includes("/api/auth/status") && !url.includes("/api/auth/setup") && !url.includes("/api/auth/verify")) {
+        console.warn("Unauthorized API call detected, showing login overlay.");
+        if (typeof showLoginOverlay === "function") {
+          showLoginOverlay();
+        } else {
+          var overlay = document.getElementById("login-overlay");
+          if (overlay) overlay.style.display = "flex";
+        }
+      }
+    }
+    return response;
+  });
 };
 
 // Helper function to prune old GitHub cached files (keeps max 30 items)
@@ -993,9 +1009,26 @@ const mockBridge = {
     }
   },
 
-  generateMermaidDiagram: async function (prompt, selectedText, diagramType) {
+  generateMermaidDiagram: async function (prompt, selectedText, diagramType, styleOption) {
     try {
-      const completePrompt = `Genera un diagrama de tipo ${diagramType} en sintaxis de Mermaid basado en la siguiente instrucción: ${prompt}. Texto de referencia: ${selectedText}. Devuelve ÚNICAMENTE el código del diagrama de Mermaid envuelto en un bloque de código, sin explicaciones.`;
+      const stylePrompts = {
+        "horizontal": "Orientación horizontal (de izquierda a derecha - LR).",
+        "vertical": "Orientación vertical (de arriba a abajo - TD).",
+        "colorful": "Aplica estilos de color llamativos y contrastados en los nodos usando las propiedades de color de Mermaid (e.g. style, classDef, fill, stroke) para hacer el diagrama muy legible y vistoso.",
+        "minimalist": "Usa un estilo limpio, monocromático o blanco y negro, sin colores saturados, centrado en la estructura.",
+        "detailed": "Incluye detalles exhaustivos en las etiquetas, relaciones y notas aclaratorias para no perder ninguna información crítica."
+      };
+      const stylePrompt = styleOption ? stylePrompts[styleOption] : "";
+      
+      const completePrompt = `Genera un diagrama de tipo ${diagramType} en sintaxis de Mermaid basado en la siguiente instrucción: ${prompt}.
+Texto de referencia: ${selectedText}.
+Instrucción de Estilo: ${stylePrompt || "Estilo estándar legible."}
+Reglas estrictas:
+1. Devuelve ÚNICAMENTE el código del diagrama de Mermaid envuelto en un bloque de código \`\`\`mermaid ... \`\`\`, sin ninguna explicación, introducción o conclusión.
+2. Asegúrate de usar la sintaxis correcta del tipo de diagrama seleccionado. Por ejemplo, si es classDiagram, no uses flechas de flowchart.
+3. Si los textos dentro de los nodos contienen espacios o caracteres especiales, encuérralos entre comillas dobles (por ejemplo, A["Texto con espacios"]).
+4. Diseña una jerarquía lógica clara y atractiva.`;
+
       const res = await fetch(`${API_BASE_URL}/api/ai/copilot`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

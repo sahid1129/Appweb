@@ -23,6 +23,7 @@
       <button onclick="bridge.openInExplorer(getExplorerPath())" title="Abrir ubicación en explorador (Ctrl+O)"><span>📁</span><span class="btn-label">Ubicación</span></button>
       <div class="sep"></div>
       <button onclick="showSettingsDialog()" title="Ajustes y Conexiones"><span>⚙️</span><span class="btn-label">Ajustes</span></button>
+      <button onclick="toggleTheme()" id="btn-theme-toggle" title="Cambiar Tema (Oscuro/Claro)"><span>🌙</span><span class="btn-label">Tema</span></button>
     </div>
 
     <!-- Main -->
@@ -162,8 +163,16 @@
               </div>
             </div>
             <!-- Image Viewer -->
-            <div id="vis-image-container" style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; overflow: auto; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border);">
-              <img id="vis-image-preview" src="" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius);" />
+            <div id="vis-image-container" style="display: none; width: 100%; height: 100%; flex-direction: column;">
+              <div class="image-controls" style="display: flex; gap: 8px; align-items: center; justify-content: center; padding: 6px 12px; background: var(--bg-card); border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius) var(--radius) 0 0; box-sizing: border-box; flex-wrap: wrap; width: 100%;">
+                <button onclick="imageZoomOut()" class="btn-icon" title="Alejar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➖</button>
+                <span id="image-zoom-percent" style="font-size: 12px; min-width: 50px; text-align: center; color: var(--text); font-weight: 500;">100%</span>
+                <button onclick="imageZoomIn()" class="btn-icon" title="Acercar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➕</button>
+                <button onclick="imageZoomFit()" class="btn-icon" title="Ajustar" style="background: none; border: none; font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">↕️ Ajustar</button>
+              </div>
+              <div id="image-scroll-area" style="flex: 1; overflow: auto; padding: 16px; background: var(--bg); display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); box-sizing: border-box; width: 100%; height: calc(100% - 40px);">
+                <img id="vis-image-preview" src="" style="max-width: 100%; max-height: 100%; transition: transform 0.2s ease, width 0.2s ease; object-fit: contain; border-radius: var(--radius);" />
+              </div>
             </div>
             <!-- Code Viewer -->
             <div id="vis-code-container" style="display: none; width: 100%; height: 100%;">
@@ -378,6 +387,14 @@
           
           <div style="display: flex; gap: 8px; margin-top: 4px;">
             <input type="text" id="selector-ai-instructions" placeholder="Instrucciones opcionales (ej. 'hazlo horizontal', 'usa colores llamativos')..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--modal-border); border-radius: 6px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none;" />
+            <select id="selector-ai-style" style="padding: 8px; border: 1px solid var(--modal-border); border-radius: 6px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none; min-width: 130px; cursor: pointer;">
+              <option value="">Estilo Estándar</option>
+              <option value="horizontal">Dirección Horizontal (LR)</option>
+              <option value="vertical">Dirección Vertical (TD)</option>
+              <option value="colorful">Colores Vivos / Temáticos</option>
+              <option value="minimalist">Blanco y Negro / Minimalista</option>
+              <option value="detailed">Altamente Detallado</option>
+            </select>
           </div>
           <div style="display: flex; justify-content: flex-end; gap: 10px;">
             <button class="modal-btn btn-secondary-modal" onclick="proceedWithTemplateWithoutAi()" style="padding: 6px 12px; font-size: 12px;">Usar Plantilla Vacía</button>
@@ -444,6 +461,14 @@
                 <div id="modal-ai-text-preview" style="font-size: 11px; color: var(--modal-text-secondary); max-height: 48px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-left: 2px solid #10b981; padding-left: 6px; font-family: monospace;">Texto seleccionado...</div>
                 <div style="display: flex; gap: 8px;">
                   <input type="text" id="modal-ai-instructions" placeholder="Instrucciones opcionales (ej. 'agrégale colores', 'hazlo horizontal')..." style="flex: 1; padding: 6px 10px; border: 1px solid var(--modal-border); border-radius: 4px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none;" />
+                  <select id="modal-ai-style" style="padding: 6px; border: 1px solid var(--modal-border); border-radius: 4px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none; min-width: 120px; cursor: pointer;">
+                    <option value="">Estilo Estándar</option>
+                    <option value="horizontal">Dirección Horizontal</option>
+                    <option value="vertical">Dirección Vertical</option>
+                    <option value="colorful">Colores Vivos</option>
+                    <option value="minimalist">Minimalista</option>
+                    <option value="detailed">Detallado</option>
+                  </select>
                   <button id="btn-modal-ai-generate" class="modal-btn btn-primary-modal" style="padding: 4px 12px; font-size: 11px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); margin: 0; box-shadow: none;" onclick="triggerAiGeneration()">Estructurar con IA</button>
                 </div>
                 <div id="modal-ai-status" style="font-size: 11px; color: #10b981; display:none; font-weight: 500;">⏳ Generando diagrama con IA...</div>
@@ -477,6 +502,14 @@
                 
                 <div style="display: flex; gap: 8px; align-items: center;">
                   <input type="text" id="canvas-ai-instructions" placeholder="Instrucciones adicionales (ej. 'hazlo horizontal', 'añade colores')..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--modal-border); border-radius: 6px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none;" />
+                  <select id="canvas-ai-style" style="padding: 8px; border: 1px solid var(--modal-border); border-radius: 6px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none; min-width: 130px; cursor: pointer;">
+                    <option value="">Estilo Estándar</option>
+                    <option value="horizontal">Dirección Horizontal</option>
+                    <option value="vertical">Dirección Vertical</option>
+                    <option value="colorful">Colores Vivos</option>
+                    <option value="minimalist">Minimalista</option>
+                    <option value="detailed">Detallado</option>
+                  </select>
                   <button onclick="triggerCanvasSelectionDiagramming()" class="modal-btn" style="padding: 8px 16px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; font-weight: 600; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2); margin: 0; outline: none;">
                     <span>🤖</span> <span>Diagramar</span>
                   </button>
@@ -578,5 +611,31 @@
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
   <script src="ui.js"></script>
+  
+  <!-- Login Overlay -->
+  <div id="login-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(8, 11, 17, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 9999999; align-items: center; justify-content: center; font-family: 'Outfit', sans-serif;">
+    <div style="background: var(--bg-card, #1c2333); border: 1px solid var(--border, rgba(255, 255, 255, 0.08)); border-radius: 12px; padding: 32px; width: 100%; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); box-sizing: border-box; text-align: center; display: flex; flex-direction: column; gap: 16px; color: var(--text, #f3f4f6);">
+      <div style="font-size: 48px; margin-bottom: 8px;">🔒</div>
+      <h2 id="login-title" style="margin: 0; font-size: 20px; font-weight: 600;">Iniciar Sesión</h2>
+      <p id="login-desc" style="margin: 0; font-size: 13px; color: var(--text-muted, #9ca3af); line-height: 1.5;">Ingresa la contraseña para acceder a tus notas.</p>
+      
+      <!-- Password Input -->
+      <input type="password" id="login-password-input" placeholder="Contraseña..." style="width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
+      
+      <!-- Confirm Password (only for setup) -->
+      <input type="password" id="login-confirm-password-input" placeholder="Confirmar contraseña..." style="display: none; width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
+      
+      <!-- Remember Me Checkbox -->
+      <div id="login-remember-container" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted, #9ca3af); margin-top: 4px; user-select: none;">
+        <input type="checkbox" id="login-remember-me" style="cursor: pointer;" />
+        <label for="login-remember-me" style="cursor: pointer;">Mantener sesión iniciada</label>
+      </div>
+
+      <!-- Submit Button -->
+      <button id="login-submit-btn" onclick="submitAuth()" style="width: 100%; padding: 10px; border: none; border-radius: 8px; background: var(--accent, #6366f1); color: white; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s ease;">Entrar</button>
+      
+      <div id="login-error" style="color: #ef4444; font-size: 12px; font-weight: 500; min-height: 16px; margin-top: 4px;"></div>
+    </div>
+  </div>
 </body>
 </html>

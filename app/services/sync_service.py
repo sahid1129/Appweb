@@ -8,7 +8,7 @@ import shutil
 import logging
 from pathlib import Path
 from io import BytesIO
-from typing import List, Dict, Tuple, Any, Optional
+from typing import List, Dict, Tuple, Any, Optional, Union
 
 # Logger config
 logger = logging.getLogger("sync_service")
@@ -624,7 +624,7 @@ class GitHubSyncService:
         except Exception:
             return None
 
-    def create_file(self, repo_full_name: str, path: str, content: str, message: str = "Create file via Launchpad") -> bool:
+    def create_file(self, repo_full_name: str, path: str, content: Union[str, bytes], message: str = "Create file via Launchpad") -> bool:
         path = path.lstrip("/")
         if not self.g:
             self.authenticate()
@@ -640,7 +640,7 @@ class GitHubSyncService:
             logger.error(f"Error creating file on GitHub: {e}")
             return False
 
-    def commit(self, repo_full_name: str, path: str, content: str, sha: str, message: str = "Edit via Launchpad") -> bool:
+    def commit(self, repo_full_name: str, path: str, content: Union[str, bytes], sha: str, message: str = "Edit via Launchpad") -> bool:
         path = path.lstrip("/")
         if not self.g:
             self.authenticate()

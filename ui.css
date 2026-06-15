@@ -1,21 +1,43 @@
 :root {
-  --bg: #ffffff;
-  --sidebar-bg: #f7f8fa;
-  --toolbar-bg: #ffffff;
-  --status-bg: #fafafa;
-  --text: #1f2937;
-  --text-muted: #6b7280;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --hover: #f3f4f6;
-  --selected: #e8f0fe;
-  --font: -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
-  --radius: 6px;
+  --bg: #0f172a;
+  --sidebar-bg: #1e293b;
+  --toolbar-bg: #0f172a;
+  --status-bg: #0f172a;
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+  --border: #334155;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --hover: #334155;
+  --selected: #1e3a8a;
+  --font: 'Outfit', -apple-system, 'Segoe UI', 'Inter', Roboto, sans-serif;
+  --font-mono: 'Fira Code', 'Cascadia Code', Monaco, monospace;
+  --radius: 8px;
   --sidebar-w: 300px;
   --toolbar-h: 46px;
   --status-h: 30px;
+  --bg-card: #1e293b;
+  --modal-bg: #1e293b;
+  --modal-border: #334155;
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.15);
+}
+
+body.light-theme {
+  --bg: #ffffff;
+  --sidebar-bg: #f8fafc;
+  --toolbar-bg: #ffffff;
+  --status-bg: #f8fafc;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --hover: #f1f5f9;
+  --selected: #dbeafe;
+  --bg-card: #ffffff;
+  --modal-bg: #ffffff;
+  --modal-border: #e2e8f0;
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -140,11 +162,11 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size
 #editor-view.active { display: flex; }
 #editor-toolbar {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 12px; background: #fafafa;
-  border-bottom: 1px solid #d1d5db; flex-shrink: 0;
+  padding: 8px 12px; background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
-#editor-toolbar .file-name { font-size: 15px; font-weight: 600; color: #111827; }
-#editor-toolbar .file-meta { font-size: 11px; color: #9ca3af; }
+#editor-toolbar .file-name { font-size: 15px; font-weight: 600; color: var(--text); }
+#editor-toolbar .file-meta { font-size: 11px; color: var(--text-muted); }
 #editor-toolbar .source-tag { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #e8f0fe; color: var(--accent); }
 #editor-toolbar button {
   border: 1px solid var(--border); background: transparent; border-radius: var(--radius);
@@ -160,7 +182,7 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size
   gap: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -168,7 +190,7 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size
   border: 0;
   border-radius: 0;
   padding: 5px 10px;
-  color: #4b5563;
+  color: var(--text-muted);
 }
 #editor-toolbar .editor-mode-group button + button { border-left: 1px solid var(--border); }
 #editor-toolbar .editor-mode-group button.active {
@@ -2129,4 +2151,177 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size
   border-radius: 4px !important;
   padding: 2px 6px !important;
   font-weight: 500 !important;
+}
+
+/* ==========================================================================
+   THEME STYLING & TOASTUI OVERRIDES & LOGIN OVERLAY
+   ========================================================================== */
+
+/* ToastUI Editor Dark Mode Overrides */
+body:not(.light-theme) .toastui-editor-defaultUI {
+  background-color: var(--bg) !important;
+  border-color: var(--border) !important;
+}
+body:not(.light-theme) .toastui-editor-toolbar {
+  background-color: var(--sidebar-bg) !important;
+  border-bottom-color: var(--border) !important;
+}
+body:not(.light-theme) .toastui-editor-defaultUI-toolbar button {
+  border-color: transparent !important;
+  color: var(--text) !important;
+  background-color: transparent !important;
+}
+body:not(.light-theme) .toastui-editor-defaultUI-toolbar button:hover {
+  background-color: var(--hover) !important;
+}
+body:not(.light-theme) .toastui-editor-main {
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+}
+body:not(.light-theme) .toastui-editor-md-container,
+body:not(.light-theme) .toastui-editor-ww-container {
+  background-color: var(--bg) !important;
+}
+body:not(.light-theme) .ProseMirror {
+  color: var(--text) !important;
+  background-color: var(--bg) !important;
+}
+body:not(.light-theme) .toastui-editor-contents {
+  color: var(--text) !important;
+}
+body:not(.light-theme) .toastui-editor-contents p,
+body:not(.light-theme) .toastui-editor-contents h1,
+body:not(.light-theme) .toastui-editor-contents h2,
+body:not(.light-theme) .toastui-editor-contents h3,
+body:not(.light-theme) .toastui-editor-contents h4,
+body:not(.light-theme) .toastui-editor-contents h5,
+body:not(.light-theme) .toastui-editor-contents h6,
+body:not(.light-theme) .toastui-editor-contents li,
+body:not(.light-theme) .toastui-editor-contents td,
+body:not(.light-theme) .toastui-editor-contents th {
+  color: var(--text) !important;
+}
+body:not(.light-theme) .toastui-editor-md-splitter {
+  background-color: var(--border) !important;
+}
+body:not(.light-theme) .toastui-editor-defaultUI-toolbar .toastui-editor-active {
+  background-color: var(--hover) !important;
+}
+body:not(.light-theme) .toastui-editor-ok-button {
+  background-color: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+body:not(.light-theme) .toastui-editor-popup {
+  background-color: var(--modal-bg) !important;
+  border-color: var(--modal-border) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+body:not(.light-theme) .toastui-editor-popup label {
+  color: var(--text) !important;
+}
+body:not(.light-theme) .toastui-editor-popup input {
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+body:not(.light-theme) .toastui-editor-mode-switch {
+  background-color: var(--sidebar-bg) !important;
+  border-top-color: var(--border) !important;
+}
+
+/* General overrides for elements in dark/light */
+body:not(.light-theme) #info-view h2 {
+  color: var(--text) !important;
+}
+body:not(.light-theme) #info-view td {
+  border-bottom: 1px solid var(--border) !important;
+}
+
+/* Chatbot Styles */
+.chatbot-msg.user {
+  background: var(--hover) !important;
+  color: var(--text) !important;
+  border-radius: 8px 8px 0 8px !important;
+}
+.chatbot-msg.assistant {
+  background: var(--bg-card) !important;
+  color: var(--text) !important;
+  border-radius: 8px 8px 8px 0 !important;
+  border: 1px solid var(--border) !important;
+}
+
+/* Login Overlay and Login Box Styles */
+#login-overlay {
+  font-family: 'Outfit', -apple-system, sans-serif;
+  color: var(--text);
+}
+.login-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  border-radius: 12px;
+  width: 380px;
+  padding: 30px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.login-box h2 {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+.login-box p {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.login-box input[type="password"] {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.login-box input[type="password"]:focus {
+  border-color: var(--accent);
+}
+.login-box button {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.login-box button:hover {
+  background: var(--accent-hover);
+}
+.login-box .error-msg {
+  color: #ef4444;
+  font-size: 12px;
+  margin: 0;
+  font-weight: 500;
+}
+.login-box .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  text-align: left;
 }

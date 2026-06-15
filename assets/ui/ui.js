@@ -803,16 +803,45 @@ function openEditorDirect(path, name, content, source) {
       ["heading", "bold", "italic", "strike"],
       ["hr", "quote"],
       ["ul", "ol", "task"],
-      ["table", "link"],
+      ["table", "image", "link"],
       ["code", "codeblock"],
       ["scrollSync"],
       [{ name: "mermaid", el: mermaidBtn }, { name: "ai-copilot", el: aiCopilotBtn }, { name: "color", el: colorBtn }, { name: "details", el: detailsBtn }]
     ],
+    hooks: {
+      addImageBlobHook: uploadImageBlob
+    },
     customHTMLRenderer: {
       htmlBlock: {
         iframe(node) {
           return [{ type: "openTag", tagName: "iframe", attributes: node.attrs }];
         }
+      },
+      image(node) {
+        var src = node.destination || '';
+        var alt = node.firstChild ? node.firstChild.literal : '';
+        if (src && !src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")) {
+          if (currentFileSource === "local") {
+            var separator = currentFilePath.includes('\\') ? '\\' : '/';
+            var lastSep = currentFilePath.lastIndexOf(separator);
+            var noteDir = lastSep >= 0 ? currentFilePath.substring(0, lastSep) : "";
+            var cleanSrc = src.replace(/^\.?\/+/, "");
+            var fullImgPath = noteDir + separator + cleanSrc;
+            src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(fullImgPath) + "&source=local";
+          } else if (currentFileSource === "github") {
+            const tab = openTabs.find(t => t.path === currentFilePath);
+            var remoteRepo = (tab && tab.info && tab.info.remote_repo) ? tab.info.remote_repo : "";
+            var remoteNotePath = (tab && tab.info && tab.info.remote_id) ? tab.info.remote_id : "";
+            var lastSlash = remoteNotePath.lastIndexOf('/');
+            var remoteImgFolder = lastSlash >= 0 ? remoteNotePath.substring(0, lastSlash) : "";
+            var cleanSrc = src.replace(/^\.?\/+/, "");
+            var relativeImgPath = remoteImgFolder ? (remoteImgFolder + "/" + cleanSrc) : cleanSrc;
+            src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(relativeImgPath) + "&source=github&remote_repo=" + encodeURIComponent(remoteRepo);
+          }
+        }
+        return [
+          { type: 'openTag', tagName: 'img', attributes: { 'src': src, 'alt': alt, 'style': 'max-width:100%; cursor:pointer;', 'onclick': 'if(window.openImageInVisualizer) window.openImageInVisualizer("' + src.replace(/\\/g, '\\\\') + '");' } }
+        ];
       },
       codeBlock(node) {
         var info = node.info || '';
@@ -2726,6 +2755,8 @@ function openMermaidModal() {
     } else {
       initialCode = cleanText;
     }
+    // Set template ID according to code to prevent undefined template types
+    window.chosenTemplateId = detectTemplateIdFromCode(initialCode);
     // Open canvas editor directly without showing selector
     openCanvasWithCode(initialCode);
     return;
@@ -2981,7 +3012,9 @@ function triggerCanvasSelectionDiagramming() {
         if (actionBox) actionBox.classList.remove('hidden');
       }
     };
-    bridge.generateMermaidDiagram(instructions, selectedText, diagramType);
+    var styleEl = document.getElementById('canvas-ai-style');
+    var styleOption = styleEl ? styleEl.value : '';
+    bridge.generateMermaidDiagram(instructions, selectedText, diagramType, styleOption);
   } else {
     if (aiLoading) aiLoading.classList.add('hidden');
     alert("Función de IA no disponible en el bridge de Python.");
@@ -3024,7 +3057,9 @@ function proceedWithAi() {
         if (aiConfirmBox) aiConfirmBox.classList.remove('hidden');
       }
     };
-    bridge.generateMermaidDiagram(prompt, selectedText, diagramType);
+    var styleEl = document.getElementById('selector-ai-style');
+    var styleOption = styleEl ? styleEl.value : '';
+    bridge.generateMermaidDiagram(prompt, selectedText, diagramType, styleOption);
   } else {
     if (aiLoading) aiLoading.classList.add('hidden');
     alert("Función de IA no disponible en el bridge de Python.");
@@ -3133,6 +3168,7 @@ function triggerModalDelayedRender() {
 
 // Hook up modal events
 document.addEventListener('DOMContentLoaded', function() {
+  checkAuthStatus();
   var btnInsert = document.getElementById('btn-modal-insert');
   var btnCancel = document.getElementById('btn-modal-cancel');
   var codeEditor = document.getElementById('modal-code-editor');
@@ -3253,7 +3289,9 @@ function triggerAiGeneration() {
         alert("Error procesando respuesta de DeepSeek: " + e);
       }
     };
-    bridge.generateMermaidDiagram(prompt, selectedText, diagramType);
+    var styleEl = document.getElementById('modal-ai-style');
+    var styleOption = styleEl ? styleEl.value : '';
+    bridge.generateMermaidDiagram(prompt, selectedText, diagramType, styleOption);
   } else {
     if (statusEl) statusEl.style.display = 'none';
     if (btnGenerate) btnGenerate.disabled = false;
@@ -3303,13 +3341,7 @@ function appendChatbotMessage(sender, text) {
   if (sender === 'system') {
     msgEl.innerHTML = text;
   } else {
-    // Simple markdown formatting helper
-    var cleanText = escapeHtml(text)
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/`(.*?)`/g, '<code>$1</code>')
-      .replace(/\n/g, '<br>');
-    msgEl.innerHTML = cleanText;
+    msgEl.innerHTML = parseMarkdownToHtml(text);
   }
   
   container.appendChild(msgEl);
@@ -4707,4 +4739,398 @@ function updateWordCount() {
     metaEl.textContent = `Palabras: ${words} · Caracteres: ${chars} · Lectura: ~${readingTime} min`;
   }
 }
+
+/* ========== AUTHENTICATION SYSTEM ========== */
+window._authMode = "login";
+
+function checkAuthStatus() {
+  fetch(API_BASE_URL + "/api/auth/status")
+    .then(r => r.json())
+    .then(data => {
+      var overlay = document.getElementById("login-overlay");
+      if (!overlay) return;
+      
+      if (!data.password_set) {
+        overlay.style.display = "flex";
+        document.getElementById("login-title").textContent = "Crear Contraseña Maestra";
+        document.getElementById("login-desc").textContent = "Crea una contraseña segura de al menos 6 caracteres para proteger tus notas.";
+        document.getElementById("login-confirm-password-input").style.display = "block";
+        document.getElementById("login-remember-container").style.display = "none";
+        document.getElementById("login-submit-btn").textContent = "Guardar y Entrar";
+        window._authMode = "setup";
+      } else {
+        const sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
+        if (sessionToken) {
+          fetch(API_BASE_URL + "/api/auth/verify")
+            .then(r => {
+              if (r.status === 200) {
+                overlay.style.display = "none";
+                initTheme();
+              } else {
+                showLoginOverlay();
+              }
+            })
+            .catch(() => {
+              showLoginOverlay();
+            });
+        } else {
+          showLoginOverlay();
+        }
+      }
+    })
+    .catch(err => {
+      console.error("Error checking auth status:", err);
+    });
+}
+
+function showLoginOverlay() {
+  var overlay = document.getElementById("login-overlay");
+  if (!overlay) return;
+  overlay.style.display = "flex";
+  document.getElementById("login-title").textContent = "Iniciar Sesión";
+  document.getElementById("login-desc").textContent = "Ingresa la contraseña para acceder a tus notas.";
+  document.getElementById("login-confirm-password-input").style.display = "none";
+  document.getElementById("login-remember-container").style.display = "flex";
+  document.getElementById("login-submit-btn").textContent = "Entrar";
+  window._authMode = "login";
+}
+
+function handleLoginKeydown(event) {
+  if (event.key === "Enter") {
+    submitAuth();
+  }
+}
+
+function submitAuth() {
+  var pwInput = document.getElementById("login-password-input");
+  var confirmInput = document.getElementById("login-confirm-password-input");
+  var rememberInput = document.getElementById("login-remember-me");
+  var errEl = document.getElementById("login-error");
+  
+  if (!pwInput || !errEl) return;
+  errEl.textContent = "";
+  
+  var password = pwInput.value;
+  if (!password) {
+    errEl.textContent = "La contraseña no puede estar vacía.";
+    return;
+  }
+  
+  if (window._authMode === "setup") {
+    var confirmPw = confirmInput ? confirmInput.value : "";
+    if (password.length < 6) {
+      errEl.textContent = "La contraseña debe tener al menos 6 caracteres.";
+      return;
+    }
+    if (password !== confirmPw) {
+      errEl.textContent = "Las contraseñas no coinciden.";
+      return;
+    }
+    
+    fetch(API_BASE_URL + "/api/auth/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: password })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (res.success && res.token) {
+        sessionStorage.setItem("app_session_token", res.token);
+        document.getElementById("login-overlay").style.display = "none";
+        pwInput.value = "";
+        if (confirmInput) confirmInput.value = "";
+        initTheme();
+        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+      } else {
+        errEl.textContent = res.detail || "Error en el registro de contraseña.";
+      }
+    })
+    .catch(err => {
+      errEl.textContent = "Error de conexión: " + err.message;
+    });
+    
+  } else {
+    fetch(API_BASE_URL + "/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: password })
+    })
+    .then(r => {
+      if (r.status === 200) return r.json();
+      throw new Error("Contraseña incorrecta");
+    })
+    .then(res => {
+      if (res.success && res.token) {
+        if (rememberInput && rememberInput.checked) {
+          localStorage.setItem("app_session_token", res.token);
+        } else {
+          sessionStorage.setItem("app_session_token", res.token);
+        }
+        document.getElementById("login-overlay").style.display = "none";
+        pwInput.value = "";
+        initTheme();
+        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+      } else {
+        errEl.textContent = "Error al iniciar sesión.";
+      }
+    })
+    .catch(err => {
+      errEl.textContent = err.message;
+    });
+  }
+}
+
+function logout() {
+  fetch(API_BASE_URL + "/api/auth/logout", { method: "POST" })
+    .finally(() => {
+      sessionStorage.removeItem("app_session_token");
+      localStorage.removeItem("app_session_token");
+      showLoginOverlay();
+    });
+}
+
+/* ========== THEME MANAGEMENT ========== */
+function initTheme() {
+  var storedTheme = localStorage.getItem("app-theme") || "dark";
+  var btn = document.getElementById("btn-theme-toggle");
+  
+  if (storedTheme === "light") {
+    document.body.classList.add("light-theme");
+    if (btn) btn.querySelector("span").textContent = "☀️";
+  } else {
+    document.body.classList.remove("light-theme");
+    if (btn) btn.querySelector("span").textContent = "🌙";
+  }
+}
+
+function toggleTheme() {
+  var btn = document.getElementById("btn-theme-toggle");
+  if (document.body.classList.contains("light-theme")) {
+    document.body.classList.remove("light-theme");
+    localStorage.setItem("app-theme", "dark");
+    if (btn) btn.querySelector("span").textContent = "🌙";
+  } else {
+    document.body.classList.add("light-theme");
+    localStorage.setItem("app-theme", "light");
+    if (btn) btn.querySelector("span").textContent = "☀️";
+  }
+}
+
+/* ========== IMAGE UPLOAD SYSTEMS ========== */
+function uploadImageBlob(blob, callback) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var base64Data = e.target.result.split(',')[1];
+    var ext = blob.type.split('/')[1] || "png";
+    var filename = "img_" + Date.now() + "." + ext;
+    
+    const tab = openTabs.find(t => t.path === currentFilePath);
+    var source = currentFileSource;
+    
+    var payload = {
+      base64_data: base64Data,
+      source: source,
+      mimetype: blob.type || "image/png",
+      path: filename
+    };
+    
+    if (source === "local") {
+      var separator = currentFilePath.includes('\\') ? '\\' : '/';
+      var lastSep = currentFilePath.lastIndexOf(separator);
+      var noteDir = lastSep >= 0 ? currentFilePath.substring(0, lastSep) : "";
+      var fullPath = noteDir + separator + "images" + separator + filename;
+      payload.path = fullPath;
+      
+      showStatus("Guardando imagen local...");
+      fetch(API_BASE_URL + "/api/file/base64/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          showStatus("Imagen guardada en images/" + filename);
+          callback("images/" + filename, filename);
+        } else {
+          showStatus("Error al guardar imagen: " + (res.error || "error desconocido"));
+        }
+      })
+      .catch(err => {
+        showStatus("Error de red: " + err.message);
+      });
+      
+    } else if (source === "github") {
+      var remoteNotePath = (tab && tab.info && tab.info.remote_id) ? tab.info.remote_id : "";
+      var remoteRepo = (tab && tab.info && tab.info.remote_repo) ? tab.info.remote_repo : "";
+      
+      var lastSlash = remoteNotePath.lastIndexOf('/');
+      var remoteImgFolder = lastSlash >= 0 ? remoteNotePath.substring(0, lastSlash) + "/images" : "images";
+      var remoteImgPath = remoteImgFolder + "/" + filename;
+      
+      payload.path = remoteImgPath;
+      payload.remote_repo = remoteRepo;
+      payload.remote_id = remoteImgPath;
+      payload.sha = null;
+      
+      showStatus("Subiendo imagen a GitHub...");
+      fetch(API_BASE_URL + "/api/file/base64/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success) {
+          showStatus("Imagen subida a GitHub");
+          callback("images/" + filename, filename);
+        } else {
+          showStatus("Error al subir a GitHub: " + (res.error || "error desconocido"));
+        }
+      })
+      .catch(err => {
+        showStatus("Error de red: " + err.message);
+      });
+      
+    } else if (source === "drive") {
+      payload.path = filename;
+      
+      showStatus("Subiendo imagen a Google Drive...");
+      fetch(API_BASE_URL + "/api/file/base64/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      })
+      .then(r => r.json())
+      .then(res => {
+        if (res.success && res.remote_id) {
+          showStatus("Imagen subida a Google Drive");
+          var embedUrl = "https://docs.google.com/uc?export=view&id=" + res.remote_id;
+          callback(embedUrl, filename);
+        } else {
+          showStatus("Error al subir a Drive: " + (res.error || "error desconocido"));
+        }
+      })
+      .catch(err => {
+        showStatus("Error de red: " + err.message);
+      });
+    }
+  };
+  reader.readAsDataURL(blob);
+}
+
+/* ========== MERMAID UTILS ========== */
+function detectTemplateIdFromCode(code) {
+  var clean = code.trim().toLowerCase();
+  if (clean.includes("venn")) return "venn";
+  if (clean.includes("classdiagram")) return "class";
+  if (clean.includes("sequencediagram")) return "sequence";
+  if (clean.includes("erdiagram")) return "erd";
+  if (clean.includes("statediagram")) return "state";
+  if (clean.includes("gantt")) return "gantt";
+  if (clean.includes("pie")) return "pie";
+  if (clean.includes("timeline")) return "timeline";
+  if (clean.includes("mindmap")) return "mindmap";
+  if (clean.includes("architecture")) return "architecture";
+  return "flowchart";
+}
+
+/* ========== IMAGE ZOOM IN VISUALIZER ========== */
+var currentImageScale = 1.0;
+
+function imageZoomIn() {
+  const img = document.getElementById("vis-image-preview");
+  if (!img) return;
+  currentImageScale += 0.2;
+  if (currentImageScale > 5.0) currentImageScale = 5.0;
+  applyImageZoom();
+}
+
+function imageZoomOut() {
+  const img = document.getElementById("vis-image-preview");
+  if (!img) return;
+  currentImageScale -= 0.2;
+  if (currentImageScale < 0.2) currentImageScale = 0.2;
+  applyImageZoom();
+}
+
+function imageZoomFit() {
+  currentImageScale = 1.0;
+  applyImageZoom(true);
+}
+
+function applyImageZoom(fit = false) {
+  const img = document.getElementById("vis-image-preview");
+  if (!img) return;
+  
+  var percentEl = document.getElementById("image-zoom-percent");
+  if (percentEl) percentEl.textContent = Math.round(currentImageScale * 100) + "%";
+  
+  if (fit) {
+    img.style.maxWidth = "100%";
+    img.style.maxHeight = "100%";
+    img.style.width = "auto";
+    img.style.transform = "none";
+  } else {
+    img.style.maxWidth = "none";
+    img.style.maxHeight = "none";
+    img.style.width = (img.naturalWidth * currentImageScale) + "px";
+    img.style.transform = "none";
+  }
+}
+
+/* ========== EXTENDED CHATBOT MARKDOWN PARSER ========== */
+function parseMarkdownToHtml(text) {
+  var html = escapeHtml(text);
+  
+  // Code blocks: ```lang code ```
+  html = html.replace(/```(\w*)\n([\s\S]*?)\n```/g, function(match, lang, code) {
+    return '<pre class="chatbot-code-block" style="background:#1e1e2e; color:#cdd6f4; padding:10px; border-radius:6px; font-family:monospace; margin:8px 0; overflow-x:auto;">' + code + '</pre>';
+  });
+  
+  // Inline code: `code`
+  html = html.replace(/`(.*?)`/g, '<code style="background:rgba(0,0,0,0.1); padding:2px 4px; border-radius:4px; font-family:monospace; color:var(--accent);">$1</code>');
+  
+  // Bold: **text**
+  html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  
+  // Italic: *text*
+  html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
+  
+  // Headers: ### text
+  html = html.replace(/^### (.*?)$/gm, '<h4 style="margin:10px 0 4px 0; font-size:13px; font-weight:600;">$1</h4>');
+  html = html.replace(/^## (.*?)$/gm, '<h3 style="margin:12px 0 4px 0; font-size:14px; font-weight:600;">$1</h3>');
+  html = html.replace(/^# (.*?)$/gm, '<h2 style="margin:14px 0 4px 0; font-size:15px; font-weight:600;">$1</h2>');
+  
+  // Bullet lists: - item
+  html = html.replace(/^\s*[-*+]\s+(.*?)$/gm, '<li style="margin-left:16px; margin-bottom:4px; list-style-type:disc;">$1</li>');
+  
+  // Line breaks
+  html = html.replace(/\n/g, '<br>');
+  
+  return html;
+}
+
+window.openImageInVisualizer = function(src) {
+  console.log("openImageInVisualizer:", src);
+  switchView("visualizer-view");
+  
+  document.getElementById("vis-pdf-container").style.display = "none";
+  document.getElementById("vis-video-container").style.display = "none";
+  document.getElementById("vis-image-container").style.display = "flex";
+  document.getElementById("vis-code-container").style.display = "none";
+  document.getElementById("vis-notebook-container").style.display = "none";
+  document.getElementById("vis-audio-container").style.display = "none";
+  document.getElementById("vis-generic-container").style.display = "none";
+  
+  setEl("visualizer-name", "🖼️ Imagen");
+  setEl("visualizer-meta", "Vista previa");
+  
+  const img = document.getElementById("vis-image-preview");
+  if (img) {
+    img.src = src;
+    currentImageScale = 1.0;
+    applyImageZoom(true);
+  }
+};
 

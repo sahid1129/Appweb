@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Visualizador</title>
   <link rel="stylesheet" href="ui.css">
-  <link rel="stylesheet" href="../editor/lib/github.min.css">
+  <link rel="stylesheet" href="assets/editor/lib/github.min.css">
   <style>
     body {
       margin: 0;
@@ -77,12 +77,22 @@
       background: var(--hover) !important;
       color: var(--accent);
     }
-    #vis-video-container, #vis-image-container, #vis-audio-container {
+    #vis-video-container, #vis-audio-container {
       display: none;
       width: 100%;
       height: 100%;
       align-items: center;
       justify-content: center;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      box-sizing: border-box;
+    }
+    #vis-image-container {
+      display: none;
+      width: 100%;
+      height: 100%;
+      flex-direction: column;
       border-radius: var(--radius);
       border: 1px solid var(--border);
       background: var(--bg-card);
@@ -103,6 +113,7 @@
       max-width: 100%;
       max-height: 100%;
       object-fit: contain;
+      transition: transform 0.2s ease, width 0.2s ease;
     }
     #vis-code-container, #vis-notebook-container {
       display: none;
@@ -187,7 +198,15 @@
 
     <!-- Image Viewer -->
     <div id="vis-image-container">
-      <img id="vis-image-preview" src="" />
+      <div class="image-controls" style="display: flex; gap: 8px; align-items: center; justify-content: center; padding: 6px 12px; background: var(--bg-card); border-bottom: 1px solid var(--border); box-sizing: border-box; flex-wrap: wrap; width: 100%;">
+        <button onclick="imageZoomOut()" class="btn-icon" title="Alejar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➖</button>
+        <span id="image-zoom-percent" style="font-size: 12px; min-width: 50px; text-align: center; color: var(--text); font-weight: 500;">100%</span>
+        <button onclick="imageZoomIn()" class="btn-icon" title="Acercar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➕</button>
+        <button onclick="imageZoomFit()" class="btn-icon" title="Ajustar" style="background: none; border: none; font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">↕️ Ajustar</button>
+      </div>
+      <div id="image-scroll-area" style="flex: 1; overflow: auto; padding: 16px; background: var(--bg); display: flex; align-items: center; justify-content: center; box-sizing: border-box; width: 100%; height: calc(100% - 40px);">
+        <img id="vis-image-preview" src="" style="max-width: 100%; max-height: 100%; transition: transform 0.2s ease, width 0.2s ease; object-fit: contain;" />
+      </div>
     </div>
 
     <!-- Code Viewer -->
@@ -265,7 +284,14 @@
       player.load();
     } else if (fileType === "image") {
       document.getElementById("vis-image-container").style.display = "flex";
-      document.getElementById("vis-image-preview").src = fileUrl;
+      var resolvedUrl = fileUrl;
+      if (window.location.protocol !== "file:") {
+        const apiBaseUrl = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+          ? "http://localhost:8000"
+          : (window.location.origin || "https://appweb-o7pl.onrender.com");
+        resolvedUrl = apiBaseUrl + "/api/file/raw?path=" + encodeURIComponent(filePath) + "&source=local";
+      }
+      document.getElementById("vis-image-preview").src = resolvedUrl;
     } else if (fileType === "audio") {
       document.getElementById("vis-audio-container").style.display = "flex";
       const player = document.getElementById("vis-audio-player");
@@ -505,6 +531,43 @@
         });
       } catch(e) {
         container.innerHTML = "<div style='color:red;'>Error al renderizar notebook: " + e.message + "</div>";
+      }
+    }
+
+    // Image zoom functionality
+    let currentImageScale = 1.0;
+    function imageZoomIn() {
+      const img = document.getElementById("vis-image-preview");
+      if (!img) return;
+      currentImageScale += 0.2;
+      if (currentImageScale > 5.0) currentImageScale = 5.0;
+      applyImageZoom();
+    }
+    function imageZoomOut() {
+      const img = document.getElementById("vis-image-preview");
+      if (!img) return;
+      currentImageScale -= 0.2;
+      if (currentImageScale < 0.2) currentImageScale = 0.2;
+      applyImageZoom();
+    }
+    function imageZoomFit() {
+      currentImageScale = 1.0;
+      applyImageZoom(true);
+    }
+    function applyImageZoom(fit = false) {
+      const img = document.getElementById("vis-image-preview");
+      if (!img) return;
+      document.getElementById("image-zoom-percent").textContent = Math.round(currentImageScale * 100) + "%";
+      if (fit) {
+        img.style.maxWidth = "100%";
+        img.style.maxHeight = "100%";
+        img.style.width = "auto";
+        img.style.transform = "none";
+      } else {
+        img.style.maxWidth = "none";
+        img.style.maxHeight = "none";
+        img.style.width = (img.naturalWidth * currentImageScale) + "px";
+        img.style.transform = "none";
       }
     }
   </script>

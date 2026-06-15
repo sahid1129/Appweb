@@ -35,9 +35,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+import hashlib
+import secrets
+from fastapi.responses import JSONResponse
+
+_ACTIVE_SESSION_TOKEN = None
+
+def hash_password(password: str, salt: bytes = None) -> str:
+    if salt is None:
+        salt = os.urandom(16)
+    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    return salt.hex() + ":" + pwd_hash.hex()
+
+def verify_password(stored_hash_str: str, password: str) -> bool:
+    try:
+        salt_hex, hash_hex = stored_hash_str.split(":")
+        salt = bytes.fromhex(salt_hex)
+        pwd_hash = bytes.fromhex(hash_hex)
+        new_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+        return pwd_hash == new_hash
+    except Exception:
+        return False
 
 @app.middleware("http")
 async def dynamic_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    
+    # Check session authentication first for API routes
+    cfg = load_config()
+    pw_hash = cfg.get("app_password_hash", "")
+    
+    if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login"):
+        if pw_hash:
+            session_token = request.headers.get("x-session-token")
+            if not session_token or session_token != _ACTIVE_SESSION_TOKEN:
+                return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing session token"})
+                
     # Extract GitHub Token
     token = request.headers.get("x-github-token")
     if token:
@@ -106,6 +139,17 @@ class FileSavePayload(BaseModel):
 class Base64SavePayload(BaseModel):
     path: str
     base64_data: str
+    source: str = "local"
+    remote_id: Optional[str] = None
+    remote_repo: Optional[str] = None
+    sha: Optional[str] = None
+    mimetype: Optional[str] = "image/png"
+
+class SetupPasswordPayload(BaseModel):
+    password: str
+
+class LoginPayload(BaseModel):
+    password: str
 
 class FileCreatePayload(BaseModel):
     parent_folder: str
@@ -497,8 +541,116 @@ def get_file_base64(path: str):
 @app.post("/api/file/base64/save")
 def save_file_base64(payload: Base64SavePayload):
     try:
-        file_manager.save_binary_file_base64(payload.path, payload.base64_data)
-        return {"success": True}
+        import base64
+        binary_data = base64.b64decode(payload.base64_data)
+
+        if payload.source == "local":
+            file_manager.save_binary_file_base64(payload.path, payload.base64_data)
+            return {"success": True, "message": "Archivo binario guardado localmente"}
+
+        elif payload.source == "drive":
+            if payload.remote_id:
+                ok, modified_time = drive_sync.upload(payload.remote_id, binary_data, payload.mimetype)
+                if not ok:
+                    raise HTTPException(status_code=500, detail="Error al subir cambios binarios a Google Drive")
+                return {"success": True, "modifiedTime": modified_time, "remote_id": payload.remote_id}
+            else:
+                cfg_drive = load_config()
+                parent_id = cfg_drive.get("drive_base_folder_id", "") or "root"
+                name = Path(payload.path).name if payload.path else "imagen.png"
+                ok, fid, mtime = drive_sync.create_file(parent_id, name, binary_data, payload.mimetype)
+                if not ok:
+                    raise HTTPException(status_code=500, detail="Error al crear archivo binario en Google Drive")
+                return {"success": True, "remote_id": fid, "modifiedTime": mtime}
+
+        elif payload.source == "github":
+            github_path = payload.remote_id or payload.path
+            if not payload.remote_repo or not github_path:
+                raise HTTPException(status_code=400, detail="Faltan repositorio o ruta para GitHub")
+            
+            if not github_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en GitHub")
+
+            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path)
+            if sha:
+                ok = github_sync.commit(payload.remote_repo, github_path, binary_data, sha, "Upload binary via Launchpad")
+            else:
+                ok = github_sync.create_file(payload.remote_repo, github_path, binary_data, "Upload binary via Launchpad")
+                
+            if not ok:
+                raise HTTPException(status_code=500, detail="Error al subir archivo binario a GitHub")
+            
+            new_sha = github_sync.get_sha(payload.remote_repo, github_path)
+            return {"success": True, "sha": new_sha}
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Origen no soportado: {payload.source}")
+
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/file/raw")
+def get_file_raw(
+    path: str,
+    source: str = "local",
+    remote_repo: Optional[str] = None,
+    remote_id: Optional[str] = None
+):
+    try:
+        if source == "local":
+            if "%" in path:
+                path = urllib.parse.unquote(path)
+            if path.startswith("file:///"):
+                path = path[8:]
+                
+            p = file_manager._validate_path(path)
+            if not p.is_file():
+                raise HTTPException(status_code=404, detail="El archivo no existe")
+            file_path = p
+        elif source == "github":
+            if not remote_repo or not path:
+                raise HTTPException(status_code=400, detail="Faltan parámetros de repositorio/ruta para GitHub")
+            
+            if not github_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en GitHub")
+                
+            safe_repo = remote_repo.replace("/", "_")
+            safe_path = path.replace("/", "_")
+            temp_path = Path(__file__).resolve().parent.parent / "_temp_files" / f"raw_github_{safe_repo}_{safe_path}"
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            ok = github_sync.download_binary(remote_repo, path, str(temp_path))
+            if not ok:
+                raise HTTPException(status_code=500, detail="Error al descargar archivo binario de GitHub")
+            file_path = temp_path
+        elif source == "drive":
+            if not remote_id:
+                raise HTTPException(status_code=400, detail="Falta remote_id para Google Drive")
+                
+            if not drive_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en Google Drive")
+                
+            temp_path = Path(__file__).resolve().parent.parent / "_temp_files" / f"raw_drive_{remote_id}"
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            ok = drive_sync.download_binary(remote_id, str(temp_path))
+            if not ok:
+                raise HTTPException(status_code=500, detail="Error al descargar archivo binario de Google Drive")
+            file_path = temp_path
+        else:
+            raise HTTPException(status_code=400, detail=f"Origen no soportado: {source}")
+
+        import mimetypes
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        if not mime_type:
+            mime_type = "application/octet-stream"
+            
+        from fastapi.responses import FileResponse
+        return FileResponse(file_path, media_type=mime_type)
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -698,3 +850,55 @@ def copilot_endpoint(payload: CopilotPayload):
         return {"success": True, "result": result}
     except Exception as e:
         return {"success": False, "error": f"Error de Copilot: {str(e)}"}
+
+# --- Authentication Endpoints ---
+
+@app.get("/api/auth/status")
+def auth_status():
+    cfg = load_config()
+    password_set = bool(cfg.get("app_password_hash", ""))
+    return {"success": True, "password_set": password_set}
+
+@app.get("/api/auth/verify")
+def auth_verify(request: Request):
+    token = request.headers.get("x-session-token")
+    if token and token == _ACTIVE_SESSION_TOKEN:
+        return {"success": True}
+    raise HTTPException(status_code=401, detail="Unauthorized")
+
+@app.post("/api/auth/setup")
+def auth_setup(payload: SetupPasswordPayload):
+    cfg = load_config()
+    if cfg.get("app_password_hash", ""):
+        raise HTTPException(status_code=400, detail="El password ya está configurado")
+        
+    if len(payload.password) < 6:
+        raise HTTPException(status_code=400, detail="El password debe tener al menos 6 caracteres")
+        
+    h = hash_password(payload.password)
+    cfg["app_password_hash"] = h
+    save_config(cfg)
+    
+    global _ACTIVE_SESSION_TOKEN
+    _ACTIVE_SESSION_TOKEN = secrets.token_hex(32)
+    return {"success": True, "token": _ACTIVE_SESSION_TOKEN}
+
+@app.post("/api/auth/login")
+def auth_login(payload: LoginPayload):
+    cfg = load_config()
+    pw_hash = cfg.get("app_password_hash", "")
+    if not pw_hash:
+        raise HTTPException(status_code=400, detail="No hay password configurado. Realiza el setup primero.")
+        
+    if verify_password(pw_hash, payload.password):
+        global _ACTIVE_SESSION_TOKEN
+        _ACTIVE_SESSION_TOKEN = secrets.token_hex(32)
+        return {"success": True, "token": _ACTIVE_SESSION_TOKEN}
+    else:
+        raise HTTPException(status_code=401, detail="Password incorrecto")
+
+@app.post("/api/auth/logout")
+def auth_logout():
+    global _ACTIVE_SESSION_TOKEN
+    _ACTIVE_SESSION_TOKEN = None
+    return {"success": True}
