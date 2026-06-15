@@ -788,7 +788,13 @@ function openEditorDirect(path, name, content, source) {
           return [{ type: "openTag", tagName: "iframe", attributes: node.attrs }];
         }
       },
-      image(node) {
+      image(node, context) {
+        if (context && !context.entering) {
+          return;
+        }
+        if (context && typeof context.skipChildren === 'function') {
+          context.skipChildren();
+        }
         var src = node.destination || '';
         var alt = node.firstChild ? node.firstChild.literal : '';
         if (src && !src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")) {
@@ -812,9 +818,17 @@ function openEditorDirect(path, name, content, source) {
             src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(relativeImgPath) + "&source=github&remote_repo=" + encodeURIComponent(remoteRepo) + tokenQuery;
           }
         }
-        return [
-          { type: 'openTag', tagName: 'img', attributes: { 'src': src, 'alt': alt, 'style': 'max-width:100%; cursor:pointer;', 'onclick': 'if(window.openImageInVisualizer) window.openImageInVisualizer("' + src.replace(/\\/g, '\\\\') + '");' } }
-        ];
+        return {
+          type: 'openTag',
+          tagName: 'img',
+          selfClose: true,
+          attributes: {
+            'src': src,
+            'alt': alt,
+            'style': 'max-width:100%; cursor:pointer;',
+            'onclick': 'if(window.openImageInVisualizer) window.openImageInVisualizer("' + src.replace(/\\/g, '\\\\') + '");'
+          }
+        };
       },
       codeBlock(node) {
         var info = node.info || '';
