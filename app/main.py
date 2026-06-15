@@ -69,7 +69,7 @@ async def dynamic_auth_middleware(request: Request, call_next):
     cfg = load_config()
     pw_hash = cfg.get("app_password_hash", "")
     
-    if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login"):
+    if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/sync/drive/callback"):
         if pw_hash:
             session_token = request.headers.get("x-session-token") or request.query_params.get("token")
             if not session_token or session_token != _ACTIVE_SESSION_TOKEN:
@@ -852,6 +852,81 @@ def save_drive_credentials(payload: dict):
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/sync/drive/auth")
+def drive_auth(request: Request):
+    from app.services.sync_service import CREDS_PATH
+    if not CREDS_PATH.exists():
+        raise HTTPException(status_code=400, detail="No se encuentra credentials.json. Súbelo primero en la configuración.")
+    
+    from google_auth_oauthlib.flow import Flow
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    host = request.headers.get("host", "localhost:8000")
+    redirect_uri = f"{scheme}://{host}/api/sync/drive/callback"
+    
+    flow = Flow.from_client_secrets_file(
+        str(CREDS_PATH),
+        scopes=["https://www.googleapis.com/auth/drive"],
+        redirect_uri=redirect_uri
+    )
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+        include_granted_scopes="true"
+    )
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(auth_url)
+
+@app.get("/api/sync/drive/callback")
+def drive_callback(request: Request, code: str):
+    from app.services.sync_service import CREDS_PATH
+    if not CREDS_PATH.exists():
+        raise HTTPException(status_code=400, detail="No se encuentra credentials.json")
+        
+    from google_auth_oauthlib.flow import Flow
+    from googleapiclient.discovery import build
+    
+    scheme = request.headers.get("x-forwarded-proto", "http")
+    host = request.headers.get("host", "localhost:8000")
+    redirect_uri = f"{scheme}://{host}/api/sync/drive/callback"
+    
+    try:
+        flow = Flow.from_client_secrets_file(
+            str(CREDS_PATH),
+            scopes=["https://www.googleapis.com/auth/drive"],
+            redirect_uri=redirect_uri
+        )
+        flow.fetch_token(code=code)
+        creds = flow.credentials
+        
+        drive_sync._creds = creds
+        drive_sync.service = build("drive", "v3", credentials=creds)
+        drive_sync._save_token()
+        
+        from fastapi.responses import HTMLResponse
+        html_content = """
+        <html>
+            <head>
+                <title>Conexión exitosa</title>
+                <style>
+                    body { font-family: sans-serif; text-align: center; padding: 50px; background-color: #0f172a; color: #f1f5f9; }
+                    .card { background-color: #1e293b; padding: 30px; border-radius: 8px; display: inline-block; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.5); }
+                    h1 { color: #22c55e; }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h1>✅ ¡Google Drive conectado!</h1>
+                    <p>La autenticación se realizó con éxito.</p>
+                    <p>Puedes cerrar esta pestaña y regresar a la aplicación.</p>
+                </div>
+            </body>
+        </html>
+        """
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=f"<h3>Error en la vinculación de Google Drive: {str(e)}</h3>", status_code=500)
 
 @app.get("/api/sync/github/files")
 def get_github_files(repo: str, path: str = ""):

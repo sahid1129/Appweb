@@ -1933,10 +1933,22 @@ function settingsSelectDriveCreds() {
 }
 
 function settingsDriveLink() {
-  if (bridge) {
-    showStatus("Vinculando Google Drive...");
+  if (bridge && typeof bridge.syncDrive === "function" && window.location.protocol === "file:") {
+    showStatus("Vinculando Google Drive (Desktop)...");
     bridge.syncDrive();
     setTimeout(loadSettingsDriveSection, 3000);
+  } else {
+    showStatus("Abriendo autenticación de Google Drive...");
+    var sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
+    var tokenQuery = sessionToken ? "?token=" + encodeURIComponent(sessionToken) : "";
+    var authUrl = API_BASE_URL + "/api/sync/drive/auth" + tokenQuery;
+    window.open(authUrl, "_blank", "width=600,height=600");
+    var checks = 0;
+    var interval = setInterval(function() {
+      loadSettingsDriveSection();
+      checks++;
+      if (checks > 15) clearInterval(interval);
+    }, 2000);
   }
 }
 
