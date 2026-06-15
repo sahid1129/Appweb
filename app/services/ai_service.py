@@ -137,13 +137,24 @@ class AIService:
                 content = res_json["choices"][0]["message"]["content"].strip()
                 return content
 
-    def chat_with_assistant(self, history: List[Dict[str, str]], user_message: str) -> str:
+    def chat_with_assistant(self, history: List[Dict[str, str]], user_message: str, mode: str = "general") -> str:
         """Maneja la conversación general con el Asistente."""
-        system_prompt = (
-            "Eres un asistente general inteligente integrado en una aplicación de notas y mapas mentales. "
-            "Ayuda al usuario a resumir información, organizar sus pensamientos y responder sus preguntas de "
-            "forma clara y concisa en formato Markdown."
-        )
+        if mode == "jefatura":
+            system_prompt = (
+                "Eres un asistente experto en comunicación y redacción profesional corporativa. "
+                "Tu objetivo es ayudar al usuario a reestructurar, corregir y redactar mensajes formales y profesionales "
+                "adecuados para comunicarse con su jefatura, superiores, gerentes o clientes corporativos. "
+                "Asegúrate de que el tono sea respetuoso, claro, conciso, diplomático y asertivo. "
+                "Optimiza la redacción y responde en formato Markdown. Si el usuario te envía un borrador o ideas, "
+                "devuelve una versión final pulida y profesional. Puedes responder dudas sobre cómo plantear un tema difícil "
+                "o simplemente reescribir lo que te pida."
+            )
+        else:
+            system_prompt = (
+                "Eres un asistente general inteligente integrado en una aplicación de notas y mapas mentales. "
+                "Ayuda al usuario a resumir información, organizar sus pensamientos y responder sus preguntas de "
+                "forma clara y concisa en formato Markdown."
+            )
         
         messages = []
         # Mantener solo las últimas 10 interacciones del historial
@@ -161,7 +172,9 @@ class AIService:
             "improve": "Eres un asistente de redacción experto. Tu tarea es mejorar la redacción, el estilo y la fluidez del siguiente texto, corrigiendo cualquier problema. Devuelve únicamente el texto mejorado en formato Markdown, sin explicaciones ni rodeos.",
             "table": "Eres un asistente de datos experto. Tu tarea es convertir la información y los datos del siguiente texto en una tabla de Markdown bien formateada y limpia. Devuelve únicamente la tabla de Markdown, sin explicaciones ni comentarios.",
             "spelling": "Eres un corrector ortográfico experto. Tu tarea es corregir todos los errores ortográficos y gramaticales del siguiente texto, manteniendo el formato original. Devuelve únicamente el texto corregido, sin explicaciones.",
-            "translate": "Eres un traductor experto. Tu tarea es traducir de forma natural el siguiente texto al idioma inglés. Devuelve únicamente la traducción, sin explicaciones ni comentarios."
+            "translate": "Eres un traductor experto. Tu tarea es traducir de forma natural el siguiente texto al idioma inglés. Devuelve únicamente la traducción, sin explicaciones ni comentarios.",
+            "formalize": "Eres un asistente de comunicación profesional experto. Tu tarea es reestructurar y reescribir el siguiente texto o borrador para que tenga un formato formal y sumamente profesional, adecuado para comunicarse con una jefatura o superiores jerárquicos. Optimiza el tono, la claridad, el respeto y la diplomacia. Devuelve únicamente el mensaje reestructurado, sin explicaciones, rodeos ni comentarios adicionales."
         }
         system_prompt = prompts.get(action, "Eres un asistente de redacción experto.")
         return self.call_ai_api(system_prompt, text, temperature=0.3)
+

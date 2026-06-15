@@ -61,6 +61,10 @@
 
         <!-- Chatbot Pane -->
         <div id="sidebar-chatbot-pane" class="sidebar-content-pane">
+          <div class="chatbot-mode-tabs">
+            <button id="chat-tab-general" class="chatbot-mode-btn active" onclick="switchChatbotMode('general')">💬 Chat General</button>
+            <button id="chat-tab-jefatura" class="chatbot-mode-btn" onclick="switchChatbotMode('jefatura')">💼 Redactor Jefatura</button>
+          </div>
           <div class="chatbot-messages" id="chatbot-messages-container">
             <div class="chatbot-msg system">
               🤖 Hola. Soy tu Asistente de IA general. Puedes preguntarme dudas, pedirme que estructure notas, cree mapas o explique temas.
@@ -577,19 +581,22 @@
         <div style="font-size: 11px; font-family: monospace; color: var(--modal-text-secondary); background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; max-height: 80px; overflow-y: auto; word-break: break-all;" id="copilot-text-preview">(sin texto seleccionado)</div>
         
         <div style="display: flex; flex-direction: column; gap: 8px;">
-          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('summarize')">
+          <button class="modal-btn" onclick="runCopilotAction('summarize')">
             <span>📝</span> <strong>Resumir Texto</strong> — Crea un resumen ejecutivo breve
           </button>
-          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('improve')">
+          <button class="modal-btn" onclick="runCopilotAction('improve')">
             <span>✍️</span> <strong>Mejorar Redacción</strong> — Corrige estilo y hace el texto más fluido
           </button>
-          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('table')">
+          <button class="modal-btn" onclick="runCopilotAction('formalize')">
+            <span>💼</span> <strong>Redactar para Jefatura</strong> — Convierte en un mensaje formal y profesional
+          </button>
+          <button class="modal-btn" onclick="runCopilotAction('table')">
             <span>📊</span> <strong>Convertir a Tabla</strong> — Estructura listas de datos en tabla Markdown
           </button>
-          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('spelling')">
+          <button class="modal-btn" onclick="runCopilotAction('spelling')">
             <span>🔍</span> <strong>Corregir Ortografía</strong> — Arregla errores gramaticales y ortográficos
           </button>
-          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('translate')">
+          <button class="modal-btn" onclick="runCopilotAction('translate')">
             <span>🌐</span> <strong>Traducir a Inglés</strong> — Traduce el fragmento seleccionado a inglés
           </button>
         </div>

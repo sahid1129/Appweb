@@ -37,8 +37,28 @@ body.light-theme {
   --bg-card: #ffffff;
   --modal-bg: #ffffff;
   --modal-border: #e2e8f0;
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
 }
+
+body.light-theme .mermaid-modal {
+  --modal-bg-app: #ffffff;
+  --modal-bg-sidebar: #f8fafc;
+  --modal-bg-pane: #f1f5f9;
+  --modal-bg-header: rgba(248, 250, 252, 0.85);
+  --modal-bg-card: #ffffff;
+  --modal-bg-card-hover: #f1f5f9;
+  --modal-border: #e2e8f0;
+  --modal-border-hover: #cbd5e1;
+  --modal-text-primary: #0f172a;
+  --modal-text-secondary: #64748b;
+  --modal-text-muted: #94a3b8;
+  --modal-primary: #2563eb;
+  --modal-primary-gradient: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+  --modal-accent: #0d9488;
+  --modal-error: #dc2626;
+  --modal-error-bg: rgba(220, 38, 38, 0.1);
+  --modal-grid-dot: rgba(0, 0, 0, 0.03);
+}
+
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size: 13px; color: var(--text); }
@@ -2325,3 +2345,88 @@ body:not(.light-theme) #info-view td {
   user-select: none;
   text-align: left;
 }
+
+/* Modal form inputs, select and textarea adaptability overrides */
+.mermaid-modal input[type="text"],
+.mermaid-modal select,
+.mermaid-modal textarea {
+  background-color: var(--modal-bg-pane) !important;
+  color: var(--modal-text-primary) !important;
+  border: 1px solid var(--modal-border) !important;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.mermaid-modal input[type="text"]:focus,
+.mermaid-modal select:focus,
+.mermaid-modal textarea:focus {
+  border-color: var(--modal-primary) !important;
+  outline: none !important;
+}
+
+.mermaid-modal .selectable-note-text {
+  background-color: var(--modal-bg-pane) !important;
+  color: var(--modal-text-primary) !important;
+  border: 1px solid var(--modal-border) !important;
+}
+
+/* Copilot Modal action buttons default & hover styles */
+#aiCopilotModal .modal-btn {
+  text-align: left;
+  padding: 10px 14px;
+  background: var(--modal-bg-card);
+  border: 1px solid var(--modal-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  width: 100%;
+  color: var(--modal-text-primary);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+#aiCopilotModal .modal-btn:hover {
+  background: var(--modal-bg-card-hover) !important;
+  border-color: var(--modal-border-hover) !important;
+}
+
+/* Chatbot mode tabs layout & premium styling */
+.chatbot-mode-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+}
+
+.chatbot-mode-btn {
+  flex: 1;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.chatbot-mode-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+body.light-theme .chatbot-mode-btn:hover {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.chatbot-mode-btn.active {
+  border-bottom-color: var(--accent);
+  color: var(--text);
+}
+

@@ -219,6 +219,7 @@ class ActiveSourcePayload(BaseModel):
 class ChatPayload(BaseModel):
     history: List[Dict[str, str]]
     message: str
+    mode: Optional[str] = "general"
 
 class CopilotPayload(BaseModel):
     action: str
@@ -975,7 +976,7 @@ def get_github_files(repo: str, path: str = ""):
 @app.post("/api/ai/chat")
 def chat_endpoint(payload: ChatPayload):
     try:
-        reply = ai_service.chat_with_assistant(payload.history, payload.message)
+        reply = ai_service.chat_with_assistant(payload.history, payload.message, mode=payload.mode)
         return {"success": True, "reply": reply}
     except Exception as e:
         return {"success": False, "error": f"Error de la IA: {str(e)}"}

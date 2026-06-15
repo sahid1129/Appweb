@@ -1022,13 +1022,13 @@ const mockBridge = {
     }
   },
 
-  chatWithDeepseek: async function (historyJson, message) {
+  chatWithDeepseek: async function (historyJson, message, mode = "general") {
     try {
       const history = JSON.parse(historyJson);
       const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ history, message })
+        body: JSON.stringify({ history, message, mode })
       });
       const data = await res.json();
       this.chatResponseReceived.emit(JSON.stringify(data));

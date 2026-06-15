@@ -66,7 +66,7 @@ var closeAfterCommit = false;
 var activeColIndex = -1;
 var isOfficeActive = false;
 var currentOfficeType = ""; // "word" or "excel"
-var editorViewMode = "edit";
+var editorViewMode = "quick";
 
 /* ========== Validacion al inicio ========== */
 function validateAll() {
@@ -752,133 +752,6 @@ function openEditorDirect(path, name, content, source) {
     openAiCopilotModal();
   };
 
-  // 3. Custom Color and Highlight Button
-  var colorBtn = document.createElement("button");
-  colorBtn.textContent = "🎨";
-  colorBtn.title = "Resaltar / Colorizar texto";
-  colorBtn.className = "toastui-editor-toolbar-icons color";
-  colorBtn.style.fontSize = "16px";
-  colorBtn.style.position = "relative";
-
-  function applyColorToSelection(tagName, styleAttribute) {
-    if (!editorInstance) return;
-    var selectedText = editorInstance.getSelectedText() || "";
-    var textToUse = selectedText.trim() ? selectedText : "texto";
-    var formatted = `<${tagName} style="${styleAttribute}">${textToUse}</${tagName}>`;
-    if (typeof editorInstance.insertText === 'function') {
-      editorInstance.insertText(formatted);
-    } else if (typeof editorInstance.replaceSelection === 'function') {
-      editorInstance.replaceSelection(formatted);
-    }
-  }
-
-  colorBtn.onclick = function(e) {
-    e.stopPropagation();
-    var existing = document.getElementById("color-dropdown-menu");
-    if (existing) {
-      existing.remove();
-      return;
-    }
-
-    var dropdown = document.createElement("div");
-    dropdown.id = "color-dropdown-menu";
-    dropdown.style.position = "absolute";
-    dropdown.style.top = "30px";
-    dropdown.style.left = "0";
-    dropdown.style.background = "#1e1e2e";
-    dropdown.style.border = "1px solid #313244";
-    dropdown.style.borderRadius = "8px";
-    dropdown.style.padding = "6px";
-    dropdown.style.zIndex = "1000";
-    dropdown.style.display = "flex";
-    dropdown.style.flexDirection = "column";
-    dropdown.style.gap = "4px";
-    dropdown.style.boxShadow = "0 4px 12px rgba(0,0,0,0.4)";
-    dropdown.style.width = "180px";
-
-    var options = [
-      { text: " Resaltado Amarillo", bg: "#fef08a", color: "#000000", tag: "mark", style: "background-color: #fef08a; color: #000000; padding: 2px 4px; border-radius: 4px;" },
-      { text: " Resaltado Verde", bg: "#bbf7d0", color: "#000000", tag: "mark", style: "background-color: #bbf7d0; color: #000000; padding: 2px 4px; border-radius: 4px;" },
-      { text: " Texto Rojo", bg: "transparent", color: "#ef4444", tag: "span", style: "color: #ef4444; font-weight: 500;" },
-      { text: " Texto Azul", bg: "transparent", color: "#3b82f6", tag: "span", style: "color: #3b82f6; font-weight: 500;" }
-    ];
-
-    options.forEach(function(opt) {
-      var btn = document.createElement("button");
-      btn.style.background = "transparent";
-      btn.style.border = "none";
-      btn.style.color = "#cdd6f4";
-      btn.style.padding = "6px 8px";
-      btn.style.borderRadius = "4px";
-      btn.style.cursor = "pointer";
-      btn.style.display = "flex";
-      btn.style.alignItems = "center";
-      btn.style.gap = "8px";
-      btn.style.fontSize = "12px";
-      btn.style.textAlign = "left";
-      btn.style.transition = "background 0.2s";
-
-      var colorBox = document.createElement("span");
-      colorBox.style.width = "12px";
-      colorBox.style.height = "12px";
-      colorBox.style.borderRadius = "50%";
-      colorBox.style.display = "inline-block";
-      colorBox.style.border = "1px solid #45475a";
-      if (opt.bg !== "transparent") {
-        colorBox.style.background = opt.bg;
-      } else {
-        colorBox.style.background = opt.color;
-      }
-
-      btn.appendChild(colorBox);
-      btn.appendChild(document.createTextNode(opt.text));
-
-      btn.onmouseover = function() { btn.style.background = "#313244"; };
-      btn.onmouseout = function() { btn.style.background = "transparent"; };
-
-      btn.onclick = function(eEvent) {
-        eEvent.stopPropagation();
-        dropdown.remove();
-        applyColorToSelection(opt.tag, opt.style);
-      };
-
-      dropdown.appendChild(btn);
-    });
-
-    var closeMenu = function() {
-      dropdown.remove();
-      document.removeEventListener("click", closeMenu);
-    };
-    setTimeout(function() {
-      document.addEventListener("click", closeMenu);
-    }, 10);
-
-    colorBtn.appendChild(dropdown);
-  };
-
-  // 4. Collapsible Section (Accordion) Button
-  var detailsBtn = document.createElement("button");
-  detailsBtn.textContent = "🔽";
-  detailsBtn.title = "Insertar Sección Colapsable (Acordeón)";
-  detailsBtn.className = "toastui-editor-toolbar-icons details";
-  detailsBtn.style.fontSize = "16px";
-  detailsBtn.onclick = function() {
-    if (!editorInstance) return;
-    var selectedText = editorInstance.getSelectedText() || "";
-    var title = prompt("Introduce el título de la sección colapsable:", "Detalles");
-    if (title === null) return;
-
-    title = title.trim() || "Detalles";
-    var body = selectedText.trim() || "Escribe el contenido aquí...";
-    var block = `<details>\n<summary>${title}</summary>\n\n${body}\n</details>\n`;
-
-    if (typeof editorInstance.insertText === 'function') {
-      editorInstance.insertText(block);
-    } else if (typeof editorInstance.replaceSelection === 'function') {
-      editorInstance.replaceSelection(block);
-    }
-  };
-
   var hljsInstance = null;
   try { if (typeof hljs !== 'undefined') hljsInstance = hljs; } catch(e) {}
 
@@ -904,7 +777,7 @@ function openEditorDirect(path, name, content, source) {
       ["table", "image", "link"],
       ["code", "codeblock"],
       ["scrollSync"],
-      [{ name: "mermaid", el: mermaidBtn }, { name: "ai-copilot", el: aiCopilotBtn }, { name: "color", el: colorBtn }, { name: "details", el: detailsBtn }]
+      [{ name: "mermaid", el: mermaidBtn }, { name: "ai-copilot", el: aiCopilotBtn }]
     ],
     hooks: {
       addImageBlobHook: uploadImageBlob
@@ -1280,74 +1153,13 @@ function commitCurrentFile() {
   }
 }
 
-function toggleEditorMode() {
-  if (!editorInstance) return;
-  const container = document.getElementById('editor-container');
-  if (!container) return;
-  
-  const isReadingMode = container.classList.contains('full-preview-mode');
-  const modeBtn = document.getElementById("btn-editor-mode");
-  
-  if (typeof window.lastEditorMode === 'undefined') {
-    window.lastEditorMode = 'wysiwyg';
-  }
-  
-  if (!isReadingMode) {
-    // Save the current editing mode
-    window.lastEditorMode = getEditorMode();
-    
-    // Switch to markdown so the preview element is built and rendered
-    if (window.lastEditorMode === 'wysiwyg') {
-      editorInstance.changeMode('markdown');
-    }
-    
-    // Enable full preview mode
-    container.classList.add('full-preview-mode');
-    
-    if (modeBtn) {
-      modeBtn.textContent = "✍️ Editar Nota";
-    }
-    showStatus("Vista de Lectura Completa (Mermaid Activo)");
-    
-    // Render Mermaid diagrams in full size
-    setTimeout(() => {
-      setupMermaidObserver();
-      renderMermaidPreview();
-    }, 100);
-  } else {
-    // Disable full preview mode
-    container.classList.remove('full-preview-mode');
-    
-    // Restore the editor mode
-    if (window.lastEditorMode === 'wysiwyg') {
-      editorInstance.changeMode('wysiwyg');
-      if (modeBtn) {
-        modeBtn.textContent = "👁️ Vista de Lectura";
-      }
-      showStatus("Editor Visual (WYSIWYG)");
-    } else {
-      editorInstance.changeMode('markdown');
-      if (modeBtn) {
-        modeBtn.textContent = "👁️ Vista de Lectura";
-      }
-      showStatus("Editor Markdown");
-    }
-  }
-}
-
 function ensureEditorModeControls() {
   var modeBtn = document.getElementById("btn-editor-mode");
-  if (!modeBtn || document.getElementById("btn-mode-edit")) return;
+  if (!modeBtn || document.getElementById("btn-mode-quick")) return;
 
   var group = document.createElement("div");
   group.id = "editor-mode-group";
   group.className = "editor-mode-group";
-
-  var editBtn = document.createElement("button");
-  editBtn.id = "btn-mode-edit";
-  editBtn.textContent = "Editar";
-  editBtn.title = "Editar sin panel dividido";
-  editBtn.onclick = function() { setEditorViewMode("edit"); };
 
   var quickBtn = document.createElement("button");
   quickBtn.id = "btn-mode-quick";
@@ -1360,15 +1172,14 @@ function ensureEditorModeControls() {
   modeBtn.onclick = function() { setEditorViewMode("read"); };
 
   modeBtn.parentNode.insertBefore(group, modeBtn);
-  group.appendChild(editBtn);
   group.appendChild(quickBtn);
   group.appendChild(modeBtn);
   updateEditorModeButtons();
 }
 
 function updateEditorModeButtons() {
-  ["edit", "quick", "read"].forEach(function(mode) {
-    var id = mode === "edit" ? "btn-mode-edit" : mode === "quick" ? "btn-mode-quick" : "btn-editor-mode";
+  ["quick", "read"].forEach(function(mode) {
+    var id = mode === "quick" ? "btn-mode-quick" : "btn-editor-mode";
     var btn = document.getElementById(id);
     if (btn) btn.classList.toggle("active", editorViewMode === mode);
   });
@@ -1376,7 +1187,7 @@ function updateEditorModeButtons() {
 
 function setEditorViewMode(mode) {
   if (!editorInstance || isOfficeActive) {
-    editorViewMode = "edit";
+    editorViewMode = "quick";
     updateEditorModeButtons();
     if (isOfficeActive && currentOfficeType === "word") {
       showStatus("Documento Word en modo edicion");
@@ -1391,20 +1202,7 @@ function setEditorViewMode(mode) {
   container.classList.remove("full-preview-mode");
   container.classList.remove("quick-preview-mode");
 
-  if (mode === "quick") {
-    if (getEditorMode() === "wysiwyg") {
-      window.lastEditorMode = "wysiwyg";
-      editorInstance.changeMode("markdown");
-    }
-    container.classList.add("quick-preview-mode");
-    showStatus("Vista rapida: editor y preview");
-    setTimeout(function() {
-      setupMermaidObserver();
-      renderMermaidPreview();
-      applyCustomStyles();
-      styleCodeBlocks();
-    }, 100);
-  } else if (mode === "read") {
+  if (mode === "read") {
     if (getEditorMode() === "wysiwyg") {
       window.lastEditorMode = "wysiwyg";
       editorInstance.changeMode("markdown");
@@ -1418,17 +1216,26 @@ function setEditorViewMode(mode) {
       styleCodeBlocks();
     }, 100);
   } else {
-    if (getEditorMode() !== "wysiwyg") {
-      editorInstance.changeMode("wysiwyg");
+    editorViewMode = "quick";
+    if (getEditorMode() === "wysiwyg") {
+      window.lastEditorMode = "wysiwyg";
+      editorInstance.changeMode("markdown");
     }
-    showStatus("Editor Visual (WYSIWYG)");
+    container.classList.add("quick-preview-mode");
+    showStatus("Vista rapida: editor y preview");
+    setTimeout(function() {
+      setupMermaidObserver();
+      renderMermaidPreview();
+      applyCustomStyles();
+      styleCodeBlocks();
+    }, 100);
   }
 
   updateEditorModeButtons();
 }
 
 function toggleEditorMode() {
-  setEditorViewMode(editorViewMode === "read" ? "edit" : "read");
+  setEditorViewMode(editorViewMode === "read" ? "quick" : "read");
 }
 
 function onSaveResult(success) {
@@ -3467,6 +3274,56 @@ function switchSidebarTab(tabName) {
 }
 
 var chatbotHistory = [];
+var jefaturaHistory = [];
+var currentChatbotMode = 'general';
+
+function switchChatbotMode(mode) {
+  if (currentChatbotMode === mode) return;
+  currentChatbotMode = mode;
+  
+  // Actualizar clases de pestañas activas
+  var tabGeneral = document.getElementById('chat-tab-general');
+  var tabJefatura = document.getElementById('chat-tab-jefatura');
+  if (tabGeneral) tabGeneral.classList.toggle('active', mode === 'general');
+  if (tabJefatura) tabJefatura.classList.toggle('active', mode === 'jefatura');
+  
+  // Limpiar contenedor de mensajes
+  var container = document.getElementById('chatbot-messages-container');
+  if (container) {
+    container.innerHTML = '';
+    
+    // Repopular mensajes
+    var historyToUse = mode === 'general' ? chatbotHistory : jefaturaHistory;
+    
+    if (historyToUse.length === 0) {
+      // Mensaje de bienvenida inicial
+      var welcomeEl = document.createElement('div');
+      welcomeEl.className = 'chatbot-msg system';
+      if (mode === 'general') {
+        welcomeEl.innerHTML = '🤖 Hola. Soy tu Asistente de IA general. Puedes preguntarme dudas, pedirme que estructure notas, cree mapas o explique temas.';
+      } else {
+        welcomeEl.innerHTML = '💼 Bienvenido al Redactor Profesional. Escribe aquí el borrador o mensaje informal que deseas enviarle a tu jefatura o supervisor, y te ayudaré a reestructurarlo con un tono formal, claro y profesional.';
+      }
+      container.appendChild(welcomeEl);
+    } else {
+      // Re-renderizar historial guardado
+      historyToUse.forEach(function(msg) {
+        appendChatbotMessage(msg.role, msg.content);
+      });
+    }
+    container.scrollTop = container.scrollHeight;
+  }
+  
+  // Cambiar placeholder del input
+  var inputEl = document.getElementById('chatbot-input');
+  if (inputEl) {
+    if (mode === 'general') {
+      inputEl.placeholder = 'Pregunta algo al Asistente de IA...';
+    } else {
+      inputEl.placeholder = 'Escribe el borrador del mensaje informal para tu jefe...';
+    }
+  }
+}
 
 function appendChatbotMessage(sender, text) {
   var container = document.getElementById('chatbot-messages-container');
@@ -3511,7 +3368,8 @@ function sendChatbotMessage() {
   appendChatbotMessage('user', text);
   
   // Add to history
-  chatbotHistory.push({ role: 'user', content: text });
+  var historyToUse = currentChatbotMode === 'general' ? chatbotHistory : jefaturaHistory;
+  historyToUse.push({ role: 'user', content: text });
   
   // Disable elements and show loading indicator
   btnSend.disabled = true;
@@ -3543,7 +3401,8 @@ function sendChatbotMessage() {
         var data = JSON.parse(resJson);
         if (data.success) {
           appendChatbotMessage('assistant', data.reply);
-          chatbotHistory.push({ role: 'assistant', content: data.reply });
+          var historyToUseNow = currentChatbotMode === 'general' ? chatbotHistory : jefaturaHistory;
+          historyToUseNow.push({ role: 'assistant', content: data.reply });
         } else {
           appendChatbotMessage('system', '⚠️ Error: ' + escapeHtml(data.error));
         }
@@ -3551,7 +3410,7 @@ function sendChatbotMessage() {
         appendChatbotMessage('system', '⚠️ Error parsing response: ' + escapeHtml(e.toString()));
       }
     };
-    bridge.chatWithDeepseek(JSON.stringify(chatbotHistory), text);
+    bridge.chatWithDeepseek(JSON.stringify(historyToUse), text, currentChatbotMode);
   } else {
     var loadBubble = document.getElementById(loadingId);
     if (loadBubble) loadBubble.remove();
