@@ -919,13 +919,15 @@ function openEditorDirect(path, name, content, source) {
         var src = node.destination || '';
         var alt = node.firstChild ? node.firstChild.literal : '';
         if (src && !src.startsWith("http://") && !src.startsWith("https://") && !src.startsWith("data:")) {
+          var sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
+          var tokenQuery = sessionToken ? "&token=" + encodeURIComponent(sessionToken) : "";
           if (currentFileSource === "local") {
             var separator = currentFilePath.includes('\\') ? '\\' : '/';
             var lastSep = currentFilePath.lastIndexOf(separator);
             var noteDir = lastSep >= 0 ? currentFilePath.substring(0, lastSep) : "";
             var cleanSrc = src.replace(/^\.?\/+/, "");
             var fullImgPath = noteDir + separator + cleanSrc;
-            src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(fullImgPath) + "&source=local";
+            src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(fullImgPath) + "&source=local" + tokenQuery;
           } else if (currentFileSource === "github") {
             const tab = openTabs.find(t => t.path === currentFilePath);
             var remoteRepo = (tab && tab.info && tab.info.remote_repo) ? tab.info.remote_repo : "";
@@ -934,7 +936,7 @@ function openEditorDirect(path, name, content, source) {
             var remoteImgFolder = lastSlash >= 0 ? remoteNotePath.substring(0, lastSlash) : "";
             var cleanSrc = src.replace(/^\.?\/+/, "");
             var relativeImgPath = remoteImgFolder ? (remoteImgFolder + "/" + cleanSrc) : cleanSrc;
-            src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(relativeImgPath) + "&source=github&remote_repo=" + encodeURIComponent(remoteRepo);
+            src = API_BASE_URL + "/api/file/raw?path=" + encodeURIComponent(relativeImgPath) + "&source=github&remote_repo=" + encodeURIComponent(remoteRepo) + tokenQuery;
           }
         }
         return [

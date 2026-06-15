@@ -71,7 +71,7 @@ async def dynamic_auth_middleware(request: Request, call_next):
     
     if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login"):
         if pw_hash:
-            session_token = request.headers.get("x-session-token")
+            session_token = request.headers.get("x-session-token") or request.query_params.get("token")
             if not session_token or session_token != _ACTIVE_SESSION_TOKEN:
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing session token"})
                 
