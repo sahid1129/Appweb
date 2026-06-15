@@ -523,6 +523,8 @@ class GitHubSyncService:
             return []
 
     def list_files(self, repo_full_name: str, path: str = "") -> list:
+        if path:
+            path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
@@ -550,6 +552,7 @@ class GitHubSyncService:
             return []
 
     def download(self, repo_full_name: str, path: str) -> Optional[str]:
+        path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
@@ -570,6 +573,7 @@ class GitHubSyncService:
             return None
 
     def download_binary(self, repo_full_name: str, path: str, local_dest_path: str) -> bool:
+        path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
@@ -589,6 +593,7 @@ class GitHubSyncService:
             return False
 
     def get_sha(self, repo_full_name: str, path: str) -> Optional[str]:
+        path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
@@ -612,6 +617,7 @@ class GitHubSyncService:
             return None
 
     def commit(self, repo_full_name: str, path: str, content: str, sha: str, message: str = "Edit via Launchpad") -> bool:
+        path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
@@ -628,6 +634,7 @@ class GitHubSyncService:
             return False
 
     def delete_file(self, repo_full_name: str, path: str, sha: str, message: str = "Delete file via Launchpad") -> bool:
+        path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
@@ -643,6 +650,8 @@ class GitHubSyncService:
             return False
 
     def rename_file(self, repo_full_name: str, old_path: str, new_path: str, sha: str, message: str = "Rename file via Launchpad") -> bool:
+        old_path = old_path.lstrip("/")
+        new_path = new_path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
