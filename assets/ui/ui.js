@@ -2235,8 +2235,33 @@ function tsvToMarkdown(tsv) {
 }
 
 function handleExcelPaste(e) {
+  const html = e.clipboardData.getData('text/html');
   const text = e.clipboardData.getData('text/plain');
+  
+  // Evitar procesar como Excel si proviene de Word
+  if (html && (
+    html.includes('urn:schemas-microsoft-com:office:word') ||
+    html.includes('MsoNormal') ||
+    html.includes('MsoListParagraph') ||
+    html.includes('MsoTableGrid') ||
+    html.includes('WordDocument') ||
+    html.includes('name="Generator" content="Microsoft Word"')
+  )) {
+    return;
+  }
+  
   if (text && text.includes('\t') && text.includes('\n')) {
+    // Validar densidad de columnas para asegurarnos de que es una tabla estructurada
+    const lines = text.trim().split('\n');
+    const rows = lines.map(line => line.replace(/\r$/, '').split('\t'));
+    const totalCols = rows.reduce((acc, row) => acc + row.length, 0);
+    const avgCols = totalCols / rows.length;
+    
+    // Si tiene un promedio de menos de 1.5 columnas, es texto tabulado y no una tabla Excel
+    if (avgCols < 1.5) {
+      return;
+    }
+
     const mdTable = tsvToMarkdown(text);
     if (mdTable) {
       e.preventDefault();
@@ -4613,114 +4638,7 @@ function reRenderPdf() {
 }
 
 function setupInteractiveTableTools(container) {
-  container.querySelectorAll('table').forEach((table) => {
-    if (table.dataset.interactive === '1') return;
-    table.dataset.interactive = '1';
-
-    // 1. Create toolbar
-    const toolbar = document.createElement('div');
-    toolbar.className = 'table-interactive-toolbar';
-    toolbar.style.display = 'flex';
-    toolbar.style.alignItems = 'center';
-    toolbar.style.justifyContent = 'space-between';
-    toolbar.style.gap = '10px';
-    toolbar.style.marginBottom = '6px';
-    toolbar.style.background = '#f9fafb';
-    toolbar.style.border = '1px solid #e5e7eb';
-    toolbar.style.borderRadius = '6px';
-    toolbar.style.padding = '6px 10px';
-    toolbar.style.boxSizing = 'border-box';
-    toolbar.style.width = '100%';
-    toolbar.style.fontFamily = 'sans-serif';
-
-    // Search input
-    const searchDiv = document.createElement('div');
-    searchDiv.style.display = 'flex';
-    searchDiv.style.alignItems = 'center';
-    searchDiv.style.gap = '6px';
-    
-    const searchInput = document.createElement('input');
-    searchInput.type = 'text';
-    searchInput.placeholder = '🔍 Filtrar tabla...';
-    searchInput.style.border = '1px solid #cbd5e1';
-    searchInput.style.borderRadius = '4px';
-    searchInput.style.padding = '3px 8px';
-    searchInput.style.fontSize = '12px';
-    searchInput.style.outline = 'none';
-    searchInput.style.width = '180px';
-    searchInput.style.boxSizing = 'border-box';
-    
-    searchInput.oninput = function() {
-      const q = searchInput.value.toLowerCase().trim();
-      const rows = table.querySelectorAll('tbody tr');
-      rows.forEach(row => {
-        const text = row.textContent.toLowerCase();
-        row.style.display = text.includes(q) ? '' : 'none';
-      });
-    };
-    
-    searchDiv.appendChild(searchInput);
-
-    // Color actions
-    const colorDiv = document.createElement('div');
-    colorDiv.style.display = 'flex';
-    colorDiv.style.alignItems = 'center';
-    colorDiv.style.gap = '4px';
-    colorDiv.style.fontSize = '11px';
-    colorDiv.style.color = '#6b7280';
-    colorDiv.innerHTML = '<span>Pintar fila:</span>';
-
-    const colors = [
-      { name: 'yellow', hex: '#fef08a' }, // yellow
-      { name: 'green', hex: '#bbf7d0' },  // green
-      { name: 'red', hex: '#fecaca' },    // red
-      { name: 'blue', hex: '#bfdbfe' },   // blue
-      { name: 'none', hex: '' }           // clear
-    ];
-
-    let activeColor = '';
-
-    colors.forEach(c => {
-      const btn = document.createElement('button');
-      btn.style.width = '14px';
-      btn.style.height = '14px';
-      btn.style.borderRadius = '50%';
-      btn.style.border = c.hex ? 'none' : '1px solid #9ca3af';
-      btn.style.background = c.hex || 'transparent';
-      btn.style.cursor = 'pointer';
-      btn.style.padding = '0';
-      btn.title = c.name === 'none' ? 'Limpiar color' : 'Pintar de ' + c.name;
-      
-      btn.onclick = function() {
-        activeColor = c.hex;
-        // Highlight selected color button
-        colorDiv.querySelectorAll('button').forEach(b => b.style.outline = 'none');
-        if (c.hex) {
-          btn.style.outline = '2px solid var(--accent)';
-        }
-      };
-      colorDiv.appendChild(btn);
-    });
-
-    toolbar.appendChild(searchDiv);
-    toolbar.appendChild(colorDiv);
-
-    // Insert toolbar before table
-    table.parentNode.insertBefore(toolbar, table);
-
-    // Add click event to table rows to paint them
-    table.querySelectorAll('tbody tr').forEach(row => {
-      row.style.cursor = 'pointer';
-      row.style.transition = 'background 0.15s';
-      row.onclick = function(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') return;
-        
-        if (activeColor !== undefined) {
-          row.style.background = activeColor;
-        }
-      };
-    });
-  });
+  // Eliminadas las funciones de filtrado e interactividad de las tablas a petición del usuario
 }
 
 // ========== Custom Local Change History / Restore Points ==========
@@ -5177,6 +5095,7 @@ function uploadImageBlob(blob, callback) {
     }
   };
   reader.readAsDataURL(blob);
+  return false; // Evita la inserción de imágenes duplicadas/por defecto en ToastUI Editor
 }
 
 /* ========== MERMAID UTILS ========== */
