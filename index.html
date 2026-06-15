@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Launchpad</title>
+  <link rel="stylesheet" href="assets/editor/lib/toastui-editor.css">
+  <link rel="stylesheet" href="assets/editor/lib/github.min.css">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <button onclick="toggleSidebar()" title="Mostrar/ocultar árbol (Ctrl+B)" class="toggle-sidebar">☰</button>
+      <div class="sep"></div>
+      <button onclick="bridge.navBack()" title="Atrás">◀</button>
+      <button onclick="bridge.navForward()" title="Adelante">▶</button>
+      <button onclick="bridge.navUp()" title="Subir">⬆</button>
+      <div class="sep"></div>
+      <button onclick="saveCurrentFile()" title="Guardar (Ctrl+S)"><span>💾</span><span class="btn-label">Guardar</span></button>
+      <button onclick="bridge.refreshTree()" title="Refrescar (Ctrl+R)"><span>🔄</span><span class="btn-label">Refrescar</span></button>
+      <button onclick="bridge.openInExplorer(getExplorerPath())" title="Abrir ubicación en explorador (Ctrl+O)"><span>📁</span><span class="btn-label">Ubicación</span></button>
+      <div class="sep"></div>
+      <button onclick="showSettingsDialog()" title="Ajustes y Conexiones"><span>⚙️</span><span class="btn-label">Ajustes</span></button>
+    </div>
+
+    <!-- Main -->
+    <div id="main">
+      <!-- Sidebar -->
+      <div id="sidebar">
+        <!-- Sidebar Tabs -->
+        <div class="sidebar-tabs">
+          <button id="tab-explorer" class="sidebar-tab-btn active" onclick="switchSidebarTab('explorer')">📂 Explorador</button>
+          <button id="tab-chatbot" class="sidebar-tab-btn" onclick="switchSidebarTab('chatbot')">💬 Chatbot IA</button>
+        </div>
+
+        <!-- Explorer Pane -->
+        <div id="sidebar-explorer-pane" class="sidebar-content-pane active">
+          <div id="sidebar-header">
+            <span id="sidebar-title">Explorador</span>
+            <div class="sidebar-actions">
+              <button onclick="createNewMdFile()" title="Crear nuevo archivo .md"><span>➕</span><span>Nuevo</span></button>
+              <button onclick="renameSelectedItem()" title="Renombrar elemento seleccionado"><span>✏️</span><span>Renombrar</span></button>
+              <button onclick="moveSelectedItem()" title="Mover elemento seleccionado"><span>📂</span><span>Mover</span></button>
+              <button onclick="deleteSelectedItem()" title="Eliminar elemento seleccionado"><span>🗑️</span><span>Eliminar</span></button>
+              <button onclick="toggleSidebar()" title="Minimizar árbol">◀</button>
+            </div>
+          </div>
+          <!-- Remote Source Selector Bar -->
+          <div class="explorer-sources-bar">
+            <button id="src-tab-all" class="explorer-source-btn active" onclick="setRemoteSourceFilter('all')" title="Mostrar todos los orígenes remotos">🌐 Todos</button>
+            <button id="src-tab-github" class="explorer-source-btn" onclick="setRemoteSourceFilter('github')" title="Mostrar sólo notas de GitHub">🐙 GitHub</button>
+            <button id="src-tab-drive" class="explorer-source-btn" onclick="setRemoteSourceFilter('drive')" title="Mostrar sólo notas de Google Drive">☁️ Drive</button>
+          </div>
+          <div id="tree"></div>
+        </div>
+
+        <!-- Chatbot Pane -->
+        <div id="sidebar-chatbot-pane" class="sidebar-content-pane">
+          <div class="chatbot-messages" id="chatbot-messages-container">
+            <div class="chatbot-msg system">
+              🤖 Hola. Soy tu Asistente de IA general. Puedes preguntarme dudas, pedirme que estructure notas, cree mapas o explique temas.
+            </div>
+          </div>
+          <div class="chatbot-input-area">
+            <textarea id="chatbot-input" placeholder="Pregunta algo al Asistente de IA..." rows="1" onkeydown="handleChatbotKeydown(event)"></textarea>
+            <button id="btn-chatbot-send" onclick="sendChatbotMessage()">➡️</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Restore button (flotante, solo visible cuando sidebar colapsada) -->
+      <div id="sidebar-restore" onclick="toggleSidebar()" title="Mostrar árbol">▶</div>
+
+      <!-- Content -->
+      <div id="content">
+        <!-- Minimalist tabs bar -->
+        <div id="tabs-bar" style="display: none;"></div>
+
+        <div id="info-view" class="view active">
+          <h2 id="info-title">Selecciona un elemento</h2>
+          <p class="meta" id="info-meta"></p>
+          <div class="sep"></div>
+          <div id="info-files"></div>
+        </div>
+
+        <div id="editor-view" class="view" style="position: relative;">
+          <div id="editor-toolbar">
+            <span class="file-name" id="editor-name">—</span>
+            <span class="source-tag" id="editor-source" style="display:none"></span>
+            <span class="file-meta" id="editor-meta"></span>
+            <button onclick="toggleSidebar()" title="Mostrar árbol">☰</button>
+            <button onclick="toggleEditorMode()" id="btn-editor-mode" title="Cambiar modo de edición/vista previa">👁️ Vista Previa</button>
+            <button onclick="openCurrentFileLocation()" title="Abrir ubicación del archivo (Ctrl+O)">📁 Ubicación</button>
+            <button onclick="commitCurrentFile()" id="btn-commit-file" style="display:none; background:var(--accent); color:white; border-color:var(--accent);" title="Subir cambios a la nube">📤 Subir</button>
+            <button onclick="toggleHistoryMenu()" id="btn-editor-history" style="display:none;" title="Historial de cambios rápidos (retroceder pasos)">⏱️ Historial</button>
+            <button onclick="closeEditor()" title="Cerrar editor">✕ Cerrar</button>
+          </div>
+          <div id="editor-history-menu" class="editor-history-menu" style="display:none; position:absolute; top:45px; right:95px; background:#fff; border:1px solid var(--border); border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); z-index:100; width:280px; padding:12px; box-sizing:border-box;">
+            <div style="font-weight:600; font-size:12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; color:var(--text); font-family:sans-serif;">
+              <span>⏱️ Puntos de Restauración</span>
+              <button onclick="toggleHistoryMenu()" style="border:none; background:none; cursor:pointer; font-size:12px; color:var(--text-muted);">✕</button>
+            </div>
+            <div id="editor-history-list" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto; font-family:sans-serif;">
+            </div>
+          </div>
+          <div id="editor-container" style="height: calc(100% - 40px); width: 100%;">
+            <!-- Markdown Editor -->
+            <div id="markdown-editor-container" style="height: 100%; width: 100%; display: none;"></div>
+            
+            <!-- Docx Editor (Rich Text) -->
+            <div id="docx-editor-container" style="height: 100%; width: 100%; display: none; overflow: auto; padding: 20px; background: white; color: black; border-radius: var(--radius); border: 1px solid var(--border); box-sizing: border-box; font-family: 'Outfit', 'Inter', sans-serif; font-size: 14px; line-height: 1.6;" contenteditable="true"></div>
+            
+            <!-- Xlsx Spreadsheet Editor -->
+            <div id="xlsx-editor-container" style="height: 100%; width: 100%; display: none; flex-direction: column; overflow: hidden; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border); box-sizing: border-box;">
+              <div id="xlsx-toolbar" style="display: flex; gap: 8px; padding: 8px; border-bottom: 1px solid var(--border); background: var(--bg); align-items: center;">
+                <button onclick="xlsxAddRow()" class="primary" style="padding: 4px 8px; font-size: 11px;">➕ Fila</button>
+                <button onclick="xlsxAddCol()" class="primary" style="padding: 4px 8px; font-size: 11px;">➕ Columna</button>
+                <button onclick="xlsxDeleteRow()" class="danger-btn" style="padding: 4px 8px; font-size: 11px; background: #dc2626; border-color: #dc2626; color: white;">➖ Fila</button>
+                <span id="xlsx-active-cell" style="font-size: 11px; color: var(--text-muted); margin-left: auto; font-family: monospace;">A1</span>
+              </div>
+              <div id="xlsx-grid-area" style="flex: 1; overflow: auto; padding: 8px; background: var(--bg-card);"></div>
+              <div id="xlsx-tabs-bar" style="display: flex; gap: 4px; padding: 4px 8px; background: var(--bg); border-top: 1px solid var(--border); overflow-x: auto;"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="visualizer-view" class="view">
+          <div id="visualizer-toolbar" style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 12px; height: 32px; box-sizing: border-box;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="file-name" id="visualizer-name" style="font-weight: 600; color: var(--text);">—</span>
+              <span class="file-meta" id="visualizer-meta" style="font-size: 11px; color: var(--text-muted);"></span>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button onclick="toggleSidebar()" title="Mostrar árbol">☰</button>
+              <button onclick="popOutVisualizer()" style="background: none; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 4px 8px; cursor: pointer; font-size: 11px;" title="Abrir en ventana externa">↗ Ventana</button>
+              <button onclick="closeVisualizer()" style="background: none; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); padding: 4px 8px; cursor: pointer; font-size: 11px;" title="Cerrar visualizador">✕ Cerrar</button>
+            </div>
+          </div>
+          <div id="visualizer-content" style="flex: 1; display: flex; flex-direction: column; overflow: hidden; box-sizing: border-box;">
+            <!-- PDF Viewer -->
+            <div id="vis-pdf-container" style="display: none; width: 100%; height: 100%; flex-direction: column;">
+              <div class="pdf-controls" style="display: flex; gap: 8px; align-items: center; justify-content: center; padding: 6px 12px; background: var(--bg-card); border: 1px solid var(--border); border-bottom: none; border-radius: var(--radius) var(--radius) 0 0; box-sizing: border-box; flex-wrap: wrap;">
+                <button onclick="pdfZoomOut()" class="btn-icon" title="Alejar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➖</button>
+                <span id="pdf-zoom-percent" style="font-size: 12px; min-width: 50px; text-align: center; color: var(--text); font-weight: 500;">100%</span>
+                <button onclick="pdfZoomIn()" class="btn-icon" title="Acercar" style="background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">➕</button>
+                <button onclick="pdfZoomFit()" class="btn-icon" title="Ajustar ancho" style="background: none; border: none; font-size: 14px; cursor: pointer; padding: 4px 8px; border-radius: var(--radius); transition: background 0.15s;">↕️ Ajustar</button>
+                <span style="border-left: 1px solid var(--border); height: 16px; margin: 0 8px;"></span>
+                <span id="pdf-page-info" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Páginas: --</span>
+              </div>
+              <div id="pdf-scroll-area" style="flex: 1; overflow-y: auto; padding: 16px; background: var(--bg); display: flex; flex-direction: column; align-items: center; gap: 16px; border: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); box-sizing: border-box;"></div>
+            </div>
+            <!-- Video Player -->
+            <div id="vis-video-container" style="display: none; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; background: #000; border-radius: var(--radius); gap: 12px; padding: 20px; box-sizing: border-box;">
+              <video id="vis-video-player" controls style="max-width: 100%; max-height: calc(100% - 40px); outline: none;"></video>
+              <div style="color: #9ca3af; font-size: 11px; text-align: center; font-family: sans-serif;">
+                ¿No se reproduce? Haz clic en:
+                <button onclick="popOutFileExternally()" style="background: var(--accent); color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 11px; margin-left: 6px; font-weight: 600;">▶ Reproducir en el Sistema</button>
+              </div>
+            </div>
+            <!-- Image Viewer -->
+            <div id="vis-image-container" style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; overflow: auto; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border);">
+              <img id="vis-image-preview" src="" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius);" />
+            </div>
+            <!-- Code Viewer -->
+            <div id="vis-code-container" style="display: none; width: 100%; height: 100%;">
+              <pre style="margin: 0; padding: 12px; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border); overflow: auto; height: 100%; box-sizing: border-box; font-family: monospace; font-size: 13px;"><code id="vis-code-block" class="hljs"></code></pre>
+            </div>
+            <!-- Jupyter Notebook Viewer -->
+            <div id="vis-notebook-container" style="display: none; width: 100%; height: 100%; overflow-y: auto; padding: 16px; box-sizing: border-box; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);">
+              <div id="vis-notebook-cells" style="max-width: 850px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px;"></div>
+            </div>
+            <!-- Audio Player -->
+            <div id="vis-audio-container" style="display: none; width: 100%; height: 100%; flex-direction: column; align-items: center; justify-content: center; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border); gap: 12px; padding: 20px; box-sizing: border-box;">
+              <audio id="vis-audio-player" controls style="width: 80%; outline: none;"></audio>
+              <div style="color: #9ca3af; font-size: 11px; text-align: center; font-family: sans-serif;">
+                ¿No se reproduce? Haz clic en:
+                <button onclick="popOutFileExternally()" style="background: var(--accent); color: white; border: none; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 11px; margin-left: 6px; font-weight: 600;">▶ Reproducir en el Sistema</button>
+              </div>
+            </div>
+            <!-- Generic Fallback Viewer -->
+            <div id="vis-generic-container" style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; flex-direction: column; background: var(--bg-card); border-radius: var(--radius); border: 1px solid var(--border); padding: 40px; box-sizing: border-box; text-align: center; gap: 16px;">
+              <div style="font-size: 64px;">📦</div>
+              <h3 id="vis-generic-name" style="margin:0; font-size:18px; color:var(--text)">—</h3>
+              <p style="font-size:13px; color:var(--text-muted); max-width:400px; margin:0">Este archivo está cargado en el visualizador en modo de solo lectura. El formato no tiene un reproductor interactivo directo, pero el archivo se descargó y guardó correctamente de forma local.</p>
+              <button onclick="openCurrentFileLocation()" class="primary" style="padding: 8px 16px; font-size: 12px; border-radius: var(--radius); cursor: pointer;">📁 Ver en Carpeta</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <div id="statusbar">Validando…</div>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loading"><div class="spinner"></div></div>
+
+  <!-- Cloud dialog -->
+  <div id="cloud-dialog">
+    <div class="dialog-box">
+      <h3 id="cloud-title"></h3>
+      <p id="cloud-text"></p>
+      <input type="password" id="github-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" style="display:none" />
+      <select id="github-repo-select" style="display:none; width:100%; margin: 10px 0; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; outline: none;"></select>
+      <div class="buttons">
+        <button onclick="closeCloudDialog()">Cancelar</button>
+        <button id="cloud-primary-btn" class="primary" onclick="cloudPrimaryAction()"></button>
+      </div>
+      <div class="result" id="cloud-result"></div>
+    </div>
+  </div>
+
+  <!-- Conflict dialog -->
+  <div id="conflict-dialog">
+    <div class="dialog-box">
+      <h3>⚠️ Conflicto de Versión</h3>
+      <p id="conflict-text">Se han detectado diferencias entre la versión remota del servidor y la copia temporal local. ¿Cómo deseas proceder?</p>
+      <div class="buttons">
+        <button onclick="resolveConflict(false)">Mantener versión local</button>
+        <button class="primary" onclick="resolveConflict(true)">Usar versión remota (token)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings dialog -->
+  <div id="settings-dialog">
+    <div class="settings-box">
+      <div class="settings-header">
+        <h3>⚙️ Ajustes y Configuración</h3>
+        <button class="settings-close" onclick="closeSettingsDialog()">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-tabs">
+          <button class="settings-tab-btn active" data-target="settings-tab-roots" onclick="switchSettingsTab(event, 'settings-tab-roots')">📂 Carpetas Locales</button>
+          <button class="settings-tab-btn" data-target="settings-tab-github" onclick="switchSettingsTab(event, 'settings-tab-github')">🐙 GitHub</button>
+          <button class="settings-tab-btn" data-target="settings-tab-drive" onclick="switchSettingsTab(event, 'settings-tab-drive')">☁️ Google Drive</button>
+          <button class="settings-tab-btn" data-target="settings-tab-deepseek" onclick="switchSettingsTab(event, 'settings-tab-deepseek')">🤖 Modelos IA</button>
+        </div>
+        <div class="settings-content">
+          <!-- Roots Tab -->
+          <div id="settings-tab-roots" class="settings-tab-content active">
+            <p class="tab-desc">Administra los directorios locales de tus notas. Puedes cambiar el actual o seleccionar una carpeta de tu historial reciente.</p>
+            <div class="settings-row">
+              <label>Carpeta Activa:</label>
+              <span id="active-root-path" class="path-display">—</span>
+              <button class="primary" onclick="settingsChangeRoot()">Cambiar Carpeta...</button>
+            </div>
+            <div class="history-section">
+              <label>Historial de Carpetas Recientes:</label>
+              <div id="roots-history-list" class="roots-history-list"></div>
+            </div>
+          </div>
+          
+          <!-- GitHub Tab -->
+          <div id="settings-tab-github" class="settings-tab-content">
+            <p class="tab-desc">Conecta tu cuenta de GitHub mediante un token clásico de acceso personal para sincronizar tus notas de forma remota.</p>
+            <div class="settings-form-row">
+              <label>Token de GitHub:</label>
+              <input type="password" id="settings-github-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" />
+            </div>
+            <div id="settings-github-repos-wrapper" style="display:none;">
+              <div class="settings-form-row">
+                <label>Repositorio Activo:</label>
+                <select id="settings-github-repo-select"></select>
+              </div>
+              <div class="settings-form-row" style="margin-top: 8px;">
+                <label>Ruta Base (Opcional):</label>
+                <select id="settings-github-base-path" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; outline: none; box-sizing: border-box;"></select>
+              </div>
+            </div>
+            <div class="settings-row-buttons">
+              <button id="settings-github-disconnect-btn" class="danger-btn" onclick="settingsGithubDisconnect()" style="display:none;">Desconectar Cuenta</button>
+              <button id="settings-github-connect-btn" class="primary" onclick="settingsGithubConnect()">Conectar y Cargar</button>
+            </div>
+            <div class="result" id="settings-github-result"></div>
+          </div>
+          
+          <!-- Drive Tab -->
+          <div id="settings-tab-drive" class="settings-tab-content">
+            <p class="tab-desc">Configura Google Drive. Necesitas descargar y proveer tu archivo <code>credentials.json</code> obtenido desde Google Cloud Console.</p>
+            <div class="settings-row">
+              <label>Archivo credentials.json:</label>
+              <span id="drive-creds-status" class="status-display">—</span>
+              <button class="primary" onclick="settingsSelectDriveCreds()">Subir credentials.json...</button>
+            </div>
+            <div class="settings-row">
+              <label>Estado de Cuenta:</label>
+              <span id="drive-auth-status" class="status-display">Desconectado</span>
+              <button id="settings-drive-link-btn" class="primary" onclick="settingsDriveLink()">Vincular Cuenta (OAuth)</button>
+              <button id="settings-drive-unlink-btn" class="danger-btn" onclick="settingsDriveUnlink()" style="display:none;">Desconectar Cuenta</button>
+            </div>
+            <div class="settings-row" style="margin-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; border: none; padding: 0; width: 100%;">
+              <label>Carpeta Base (Opcional):</label>
+              <select id="settings-drive-base-folder-id" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; outline: none; box-sizing: border-box;"></select>
+            </div>
+            <div class="result" id="settings-drive-result"></div>
+          </div>
+
+          <!-- AI Models Tab -->
+          <div id="settings-tab-deepseek" class="settings-tab-content">
+            <p class="tab-desc">Configura el proveedor de Inteligencia Artificial activo para las funciones de chatbot, estructuración de diagramas y copilot de texto.</p>
+            <div class="settings-form-row">
+              <label>Proveedor de IA Activo:</label>
+              <select id="settings-ai-provider" onchange="toggleAiProviderFields()" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; outline: none; margin-top: 4px; margin-bottom: 12px;">
+                <option value="deepseek">DeepSeek / OpenRouter</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </div>
+            
+            <!-- DeepSeek Options Section -->
+            <div id="settings-deepseek-section">
+              <div class="settings-form-row">
+                <label>DeepSeek API Key:</label>
+                <input type="password" id="settings-deepseek-key" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="margin-bottom: 12px;" />
+              </div>
+            </div>
+            
+            <!-- Gemini Options Section -->
+            <div id="settings-gemini-section" style="display: none;">
+              <div class="settings-form-row">
+                <label>Gemini API Key:</label>
+                <input type="password" id="settings-gemini-key" placeholder="AIzaSyxxxxxxxxxxxxxxxxxxxxxxxxxxxx" style="margin-bottom: 12px;" />
+              </div>
+              <div class="settings-form-row">
+                <label>Modelo Gemini:</label>
+                <select id="settings-gemini-model" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; outline: none; margin-top: 4px; margin-bottom: 12px;">
+                  <option value="gemini-flash-latest">Gemini Flash (Rápido y Recomendado)</option>
+                  <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                  <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                  <option value="gemini-pro-latest">Gemini Pro (Razonamiento)</option>
+                </select>
+              </div>
+            </div>
+            
+            <div class="settings-row-buttons">
+              <button id="settings-deepseek-save-btn" class="primary" onclick="settingsDeepseekSave()">Guardar Configuración</button>
+            </div>
+            <div class="result" id="settings-deepseek-result"></div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-footer">
+        <button onclick="pushCodeChanges()" title="Subir código a tu repositorio de GitHub" style="margin-right: auto;" class="settings-push-code-btn">📤 Subir Código</button>
+        <button class="primary" onclick="closeSettingsDialog()">Aceptar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diagram Selector Modal -->
+  <div id="diagramSelectorModal" class="mermaid-modal hidden">
+    <div class="mermaid-modal-content select-modal-content">
+      <header class="modal-header">
+        <div class="modal-title-area">
+          <span style="font-size: 20px; margin-right: 8px;">📊</span>
+          <span class="modal-title">Lienzo de Mermaid — Elegir Plantilla</span>
+        </div>
+        <button class="settings-close" onclick="closeDiagramSelectorModal()" style="background:none; border:none; color:var(--modal-text-secondary); cursor:pointer; font-size:18px;">✕</button>
+      </header>
+      <div class="modal-body" style="padding: 20px; flex-direction: column; overflow-y: auto; gap: 16px;">
+        <p style="font-size: 13px; color: var(--modal-text-secondary); margin: 0;">Selecciona una plantilla para comenzar a diseñar tu mapa. Si tienes texto seleccionado, podrás usar el Asistente de IA para estructurarlo de forma automática.</p>
+        
+        <!-- Templates Grid -->
+        <div class="templates-grid" id="selector-templates-grid">
+          <!-- Dynamically populated in JS -->
+        </div>
+
+        <!-- AI Confirmation Box -->
+        <div id="selector-ai-confirm-box" class="hidden" style="padding: 16px; border-radius: 8px; background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); display: flex; flex-direction: column; gap: 12px; margin-top: 10px;">
+          <div style="font-size: 13px; font-weight: 600; color: #10b981; display: flex; align-items: center; gap: 6px;">
+            <span>🤖 Asistente de IA — Estructurar Información</span>
+          </div>
+          <p style="font-size: 12px; color: var(--modal-text-secondary); margin: 0;">¿Deseas que la IA analice el texto seleccionado y lo convierta automáticamente en el diagrama elegido?</p>
+          <div style="font-size: 11px; font-family: monospace; color: var(--modal-text-secondary); background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; max-height: 80px; overflow-y: auto; word-break: break-all;" id="selector-ai-text-preview"></div>
+          
+          <div style="display: flex; gap: 8px; margin-top: 4px;">
+            <input type="text" id="selector-ai-instructions" placeholder="Instrucciones opcionales (ej. 'hazlo horizontal', 'usa colores llamativos')..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--modal-border); border-radius: 6px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none;" />
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 10px;">
+            <button class="modal-btn btn-secondary-modal" onclick="proceedWithTemplateWithoutAi()" style="padding: 6px 12px; font-size: 12px;">Usar Plantilla Vacía</button>
+            <button class="modal-btn btn-primary-modal" onclick="proceedWithAi()" style="padding: 6px 16px; font-size: 12px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); border: none;">Sí, Estructurar con IA</button>
+          </div>
+        </div>
+        
+        <!-- Loading overlay inside selector -->
+        <div id="selector-ai-loading" class="hidden" style="text-align: center; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 10px;">
+          <div class="spinner" style="border-top-color: #10b981;"></div>
+          <span style="font-size: 13px; color: #10b981; font-weight: 500;">⏳ Generando diagrama con IA...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="mermaidModal" class="mermaid-modal hidden">
+    <div class="mermaid-modal-content">
+      <header class="modal-header">
+        <div class="modal-title-area">
+          <span style="font-size: 20px; margin-right: 8px;">🧜‍♀️</span>
+          <span class="modal-title">Mermaid Canvas — Integración</span>
+        </div>
+        <div class="modal-header-actions">
+          <button id="btn-modal-cancel" class="modal-btn btn-secondary-modal" title="Cancelar cambios">
+            <span>❌ </span>
+            <span>Cancelar</span>
+          </button>
+          <button id="btn-modal-insert" class="modal-btn btn-primary-modal" title="Inyectar bloque en nota">
+            <span>✔️ </span>
+            <span>Insertar en Nota</span>
+          </button>
+        </div>
+      </header>
+      <div class="modal-body">
+        <!-- Main Workspace -->
+        <div class="modal-workspace">
+          <!-- Code Editor Panel -->
+          <div class="modal-pane pane-editor">
+            <div class="pane-header">
+              <div class="pane-title">
+                <span style="margin-right: 6px;">💻</span>
+                <span>Editor de Código</span>
+              </div>
+            </div>
+            
+            <!-- Canvas Workspace Tabs -->
+            <div class="canvas-tab-bar" style="display: flex; border-bottom: 1px solid var(--modal-border); background: var(--modal-bg-sidebar); flex-shrink: 0;">
+              <button id="canvas-tab-manual" class="canvas-tab-btn active" onclick="switchCanvasTab('manual')" style="flex: 1; padding: 10px; background: transparent; border: none; border-bottom: 2px solid var(--modal-primary); color: var(--modal-text-primary); font-size: 11px; font-weight: 600; cursor: pointer; outline: none; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span>💻</span> <span>Manual / Código</span>
+              </button>
+              <button id="canvas-tab-ai" class="canvas-tab-btn" onclick="switchCanvasTab('ai')" style="flex: 1; padding: 10px; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--modal-text-secondary); font-size: 11px; font-weight: 600; cursor: pointer; outline: none; transition: all 0.15s; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                <span>🤖</span> <span>Estructurar por Selección</span>
+              </button>
+            </div>
+            
+            <!-- Tab 1: Manual Code Editor -->
+            <div id="canvas-pane-manual" class="canvas-pane-content" style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+              <!-- AI Helper Box -->
+              <div id="modal-ai-box" class="modal-ai-box hidden" style="background: rgba(16, 185, 129, 0.08); border-bottom: 1px solid rgba(16, 185, 129, 0.2); padding: 12px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="font-size: 12px; font-weight: 600; color: #10b981; display: flex; align-items: center; gap: 6px;">
+                  <span>🤖 Estructurador de Texto con IA</span>
+                </div>
+                <div id="modal-ai-text-preview" style="font-size: 11px; color: var(--modal-text-secondary); max-height: 48px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-left: 2px solid #10b981; padding-left: 6px; font-family: monospace;">Texto seleccionado...</div>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" id="modal-ai-instructions" placeholder="Instrucciones opcionales (ej. 'agrégale colores', 'hazlo horizontal')..." style="flex: 1; padding: 6px 10px; border: 1px solid var(--modal-border); border-radius: 4px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none;" />
+                  <button id="btn-modal-ai-generate" class="modal-btn btn-primary-modal" style="padding: 4px 12px; font-size: 11px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); margin: 0; box-shadow: none;" onclick="triggerAiGeneration()">Estructurar con IA</button>
+                </div>
+                <div id="modal-ai-status" style="font-size: 11px; color: #10b981; display:none; font-weight: 500;">⏳ Generando diagrama con IA...</div>
+              </div>
+              <div class="editor-container-wrapper" style="flex: 1; min-height: 0; display: flex;">
+                <div class="line-numbers-gutter" id="modal-line-numbers">1</div>
+                <textarea id="modal-code-editor" spellcheck="false" placeholder="Escribe tu código Mermaid aquí..."></textarea>
+              </div>
+            </div>
+            
+            <!-- Tab 2: Estructurar por Selección (Obsidian AI Selection System) -->
+            <div id="canvas-pane-ai" class="canvas-pane-content hidden" style="display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 16px; gap: 12px; overflow-y: auto;">
+              <div style="font-size: 13px; font-weight: 600; color: var(--modal-text-primary); display: flex; align-items: center; gap: 6px;">
+                <span>📝 Texto de la Nota Actual</span>
+              </div>
+              <p style="font-size: 11px; color: var(--modal-text-secondary); margin: 0;">
+                Selecciona una parte del texto de la nota a continuación. Cuando realices la selección, aparecerá el botón <b>"Diagramar"</b> para transformarlo en esquema con IA.
+              </p>
+              
+              <!-- Selectable Note Text Container -->
+              <div id="canvas-note-text-area" class="selectable-note-text" style="flex: 1; min-height: 180px; max-height: 300px; overflow-y: auto; background: rgba(0,0,0,0.25); border: 1px solid var(--modal-border); border-radius: 6px; padding: 12px; font-size: 12.5px; line-height: 1.5; color: var(--modal-text-primary); user-select: text; -webkit-user-select: text; white-space: pre-wrap; overflow-x: hidden; cursor: text;">
+                (No hay texto cargado en la nota)
+              </div>
+              
+              <!-- Instructions and Diagramar Action Block -->
+              <div id="canvas-ai-action-box" class="hidden" style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px; padding: 12px; display: flex; flex-direction: column; gap: 10px;">
+                <div style="font-size: 12px; font-weight: 600; color: #10b981; display: flex; align-items: center; gap: 6px;">
+                  <span>🎯 Selección a Diagramar:</span>
+                </div>
+                <div id="canvas-ai-selection-preview" style="font-size: 11px; color: var(--modal-text-secondary); font-family: monospace; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; max-height: 60px; overflow-y: auto; border-left: 2px solid #10b981; white-space: pre-wrap; word-break: break-all;"></div>
+                
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <input type="text" id="canvas-ai-instructions" placeholder="Instrucciones adicionales (ej. 'hazlo horizontal', 'añade colores')..." style="flex: 1; padding: 8px 12px; border: 1px solid var(--modal-border); border-radius: 6px; background: rgba(0,0,0,0.25); color: white; font-size: 12px; outline: none;" />
+                  <button onclick="triggerCanvasSelectionDiagramming()" class="modal-btn" style="padding: 8px 16px; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; border: none; font-weight: 600; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 6px; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2); margin: 0; outline: none;">
+                    <span>🤖</span> <span>Diagramar</span>
+                  </button>
+                </div>
+              </div>
+              
+              <!-- Local AI generation spinner -->
+              <div id="canvas-ai-loading" class="hidden" style="display: flex; align-items: center; justify-content: center; gap: 10px; padding: 10px;">
+                <div class="spinner" style="border-top-color: #10b981; width: 20px; height: 20px; border-width: 2px;"></div>
+                <span style="font-size: 12px; color: #10b981; font-weight: 500;">⏳ IA estructurando diagrama...</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Graphic Preview Panel -->
+          <div class="modal-pane pane-preview">
+            <div class="pane-header">
+              <div class="pane-title">
+                <span style="margin-right: 6px;">👁️</span>
+                <span>Vista Gráfica</span>
+              </div>
+              <div class="preview-actions">
+                <button id="btn-modal-zoom-in" class="btn-icon-small" title="Acercar">
+                  <span>➕</span>
+                </button>
+                <button id="btn-modal-zoom-out" class="btn-icon-small" title="Alejar">
+                  <span>➖</span>
+                </button>
+                <button id="btn-modal-zoom-reset" class="btn-icon-small" title="Centrar">
+                  <span>🔍</span>
+                </button>
+              </div>
+            </div>
+            <div class="preview-container-wrapper">
+              <!-- Error Banner -->
+              <div id="modal-error-banner" class="modal-error-banner hidden">
+                <div class="error-header">
+                  <span>⚠️</span>
+                  <h4>Error de Renderizado</h4>
+                </div>
+                <pre id="modal-error-message" class="error-message"></pre>
+              </div>
+              
+              <!-- Render Target -->
+              <div id="modal-mermaid-render-target" class="render-canvas"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Copilot Modal -->
+  <div id="aiCopilotModal" class="mermaid-modal hidden">
+    <div class="mermaid-modal-content select-modal-content" style="max-width: 480px;">
+      <header class="modal-header">
+        <div class="modal-title-area">
+          <span style="font-size: 18px;">✨ Copilot de IA</span>
+        </div>
+        <button class="settings-close" onclick="closeAiCopilotModal()" style="background:none; border:none; color:var(--modal-text-secondary); cursor:pointer; font-size:18px;">✕</button>
+      </header>
+      <div class="modal-body" style="padding: 20px; flex-direction: column; gap: 16px;">
+        <p style="font-size: 13px; color: var(--modal-text-secondary); margin: 0;">Selecciona una acción para aplicar inteligencia artificial al texto seleccionado en tu editor de Markdown:</p>
+        
+        <div style="font-size: 11px; font-family: monospace; color: var(--modal-text-secondary); background: rgba(0,0,0,0.2); padding: 8px; border-radius: 4px; max-height: 80px; overflow-y: auto; word-break: break-all;" id="copilot-text-preview">(sin texto seleccionado)</div>
+        
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('summarize')">
+            <span>📝</span> <strong>Resumir Texto</strong> — Crea un resumen ejecutivo breve
+          </button>
+          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('improve')">
+            <span>✍️</span> <strong>Mejorar Redacción</strong> — Corrige estilo y hace el texto más fluido
+          </button>
+          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('table')">
+            <span>📊</span> <strong>Convertir a Tabla</strong> — Estructura listas de datos en tabla Markdown
+          </button>
+          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('spelling')">
+            <span>🔍</span> <strong>Corregir Ortografía</strong> — Arregla errores gramaticales y ortográficos
+          </button>
+          <button class="modal-btn" style="text-align: left; padding: 10px 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--modal-border); display: flex; align-items: center; gap: 10px; border-radius: 8px; width: 100%; color: white; cursor: pointer; transition: background 0.15s ease;" onclick="runCopilotAction('translate')">
+            <span>🌐</span> <strong>Traducir a Inglés</strong> — Traduce el fragmento seleccionado a inglés
+          </button>
+        </div>
+        
+        <div id="copilot-status" style="font-size: 12px; color: #10b981; display: none; text-align: center; font-weight: 500; margin-top: 8px;">
+          ⏳ Procesando con IA...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="api_bridge.js"></script>
+  <script src="assets/editor/lib/toastui-editor.js"></script>
+  <script src="assets/editor/lib/highlight.min.js"></script>
+  <script src="assets/editor/lib/mermaid.min.js"></script>
+  <script src="assets/editor/lib/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
+  <script src="ui.js"></script>
+</body>
+</html>
