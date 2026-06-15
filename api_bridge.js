@@ -5,7 +5,7 @@
  */
 
 // Define global base URL for the API
-const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:"
   ? "http://localhost:8000"
   : "https://appweb-o7pl.onrender.com"; // En producción, si se aloja en el mismo servidor, se puede usar ruta relativa. Si no, poner URL de Render.
 
