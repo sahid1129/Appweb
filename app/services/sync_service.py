@@ -616,6 +616,22 @@ class GitHubSyncService:
         except Exception:
             return None
 
+    def create_file(self, repo_full_name: str, path: str, content: str, message: str = "Create file via Launchpad") -> bool:
+        path = path.lstrip("/")
+        if not self.g:
+            self.authenticate()
+        if not self.g:
+            return False
+        self._increment_api()
+        try:
+            repo = self.g.get_repo(repo_full_name)
+            repo.create_file(path, message, content)
+            _cache_clear_repo("github", repo_full_name)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating file on GitHub: {e}")
+            return False
+
     def commit(self, repo_full_name: str, path: str, content: str, sha: str, message: str = "Edit via Launchpad") -> bool:
         path = path.lstrip("/")
         if not self.g:

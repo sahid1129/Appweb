@@ -73,6 +73,11 @@ class FileCreatePayload(BaseModel):
     type: str  # "file" o "folder"
     content: Optional[str] = ""
 
+class FileCreateCloudPayload(BaseModel):
+    parent_folder: str
+    filename: str
+    content: Optional[str] = ""
+
 class FileActionPayload(BaseModel):
     path: str
     source: str = "local"
@@ -162,6 +167,44 @@ def _parse_index_table(path: Path) -> tuple:
     except Exception:
         pass
     return pages, sources
+
+def _parse_cloud_path(path_str: str) -> Optional[dict]:
+    if not path_str:
+        return None
+    
+    if path_str.startswith("github://localpath/"):
+        rel = path_str[len("github://localpath/"):]
+        parts = rel.split("/")
+        if len(parts) >= 2:
+            repo = f"{parts[0]}/{parts[1]}"
+            inner_path = "/".join(parts[2:])
+            return {"service": "github", "repo": repo, "path": inner_path}
+    elif path_str.startswith("github://repo/"):
+        repo = path_str[len("github://repo/"):]
+        return {"service": "github", "repo": repo, "path": ""}
+    elif path_str.startswith("github://dir/"):
+        rel = path_str[len("github://dir/"):]
+        parts = rel.split("/")
+        if len(parts) >= 2:
+            repo = f"{parts[0]}/{parts[1]}"
+            inner_path = "/".join(parts[2:])
+            return {"service": "github", "repo": repo, "path": inner_path}
+    
+    if path_str.startswith("drive://localpath/"):
+        rel = path_str[len("drive://localpath/"):]
+        parts = rel.split("/")
+        if parts:
+            folder_id = parts[0]
+            return {"service": "drive", "folder_id": folder_id}
+    elif path_str.startswith("drive://folder/"):
+        folder_id = path_str[len("drive://folder/"):]
+        return {"service": "drive", "folder_id": folder_id}
+    elif path_str == "drive://":
+        cfg = load_config()
+        folder_id = cfg.get("drive_base_folder_id", "") or "root"
+        return {"service": "drive", "folder_id": folder_id}
+        
+    return None
 
 
 # --- Rutas de la API ---
