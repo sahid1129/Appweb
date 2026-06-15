@@ -893,7 +893,6 @@ const mockBridge = {
   },
 
   generateMermaidDiagram: async function (prompt, selectedText, diagramType) {
-    // Podemos canalizar esto al endpoint de copilot/chat o simular respuesta IA
     try {
       const completePrompt = `Genera un diagrama de tipo ${diagramType} en sintaxis de Mermaid basado en la siguiente instrucción: ${prompt}. Texto de referencia: ${selectedText}. Devuelve ÚNICAMENTE el código del diagrama de Mermaid envuelto en un bloque de código, sin explicaciones.`;
       const res = await fetch(`${API_BASE_URL}/api/ai/copilot`, {
@@ -902,6 +901,19 @@ const mockBridge = {
         body: JSON.stringify({ action: "improve", text: completePrompt })
       });
       const data = await res.json();
+      
+      if (data.success && data.result) {
+        let code = data.result;
+        // Extraer contenido de bloques de código de markdown si existen
+        const match = code.match(/```(?:mermaid)?\s*([\s\S]*?)\s*```/i);
+        if (match) {
+          code = match[1];
+        }
+        data.code = code.trim();
+      } else {
+        data.code = "";
+      }
+      
       this.mermaidDiagramGenerated.emit(JSON.stringify(data));
     } catch (err) {
       this.mermaidDiagramGenerated.emit(JSON.stringify({ success: false, error: err.message }));
