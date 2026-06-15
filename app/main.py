@@ -59,6 +59,10 @@ def verify_password(stored_hash_str: str, password: str) -> bool:
 
 @app.middleware("http")
 async def dynamic_auth_middleware(request: Request, call_next):
+    # Allow all OPTIONS requests to bypass auth for CORS preflight compatibility
+    if request.method == "OPTIONS":
+        return await call_next(request)
+        
     path = request.url.path
     
     # Check session authentication first for API routes
