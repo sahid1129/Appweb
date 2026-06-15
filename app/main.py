@@ -448,7 +448,7 @@ def save_file(payload: FileSavePayload):
             if not github_sync.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
 
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path)
+            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             if not sha:
                 raise HTTPException(status_code=404, detail="No se pudo obtener el SHA del archivo en GitHub para el commit")
 
@@ -456,7 +456,7 @@ def save_file(payload: FileSavePayload):
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al hacer commit en GitHub")
             
-            new_sha = github_sync.get_sha(payload.remote_repo, github_path)
+            new_sha = github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             return {"success": True, "sha": new_sha}
 
         else:
@@ -577,7 +577,7 @@ def save_file_base64(payload: Base64SavePayload):
             if not github_sync.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub")
 
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path)
+            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             if sha:
                 ok = github_sync.commit(payload.remote_repo, github_path, binary_data, sha, "Upload binary via Launchpad")
             else:
@@ -586,7 +586,7 @@ def save_file_base64(payload: Base64SavePayload):
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al subir archivo binario a GitHub")
             
-            new_sha = github_sync.get_sha(payload.remote_repo, github_path)
+            new_sha = github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             return {"success": True, "sha": new_sha}
 
         else:
@@ -734,7 +734,7 @@ def delete_file_or_folder(payload: FileActionPayload):
         elif payload.source == "github":
             if not payload.remote_repo or not payload.path:
                 raise HTTPException(status_code=400, detail="Faltan datos de GitHub")
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path)
+            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path, bypass_cache=True)
             ok = github_sync.delete_file(payload.remote_repo, payload.path, sha)
             return {"success": ok}
     except Exception as e:
@@ -755,7 +755,7 @@ def rename_file_or_folder(payload: FileRenamePayload):
         elif payload.source == "github":
             if not payload.remote_repo or not payload.path:
                 raise HTTPException(status_code=400, detail="Faltan datos de GitHub")
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path)
+            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path, bypass_cache=True)
             new_path = str(Path(payload.path).parent / payload.new_name).replace("\\", "/")
             ok = github_sync.rename_file(payload.remote_repo, payload.path, new_path, sha)
             return {"success": ok, "path": new_path}

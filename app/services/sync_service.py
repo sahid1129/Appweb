@@ -615,24 +615,33 @@ class GitHubSyncService:
             logger.error(f"Error descargando binario de GitHub: {e}")
             return False
 
-    def get_sha(self, repo_full_name: str, path: str) -> Optional[str]:
+    def get_sha(self, repo_full_name: str, path: str, bypass_cache: bool = False) -> Optional[str]:
         path = path.lstrip("/")
         if not self.g:
             self.authenticate()
         if not self.g:
             return None
-        meta_path = _cache_path("github", repo_full_name, path).parent / ".meta.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text("utf-8"))
-                finfo = meta.get("files", {}).get(path, {})
-                if finfo.get("sha"):
-                    return finfo["sha"]
-            except Exception:
-                pass
+        if not bypass_cache:
+            meta_path = _cache_path("github", repo_full_name, path).parent / ".meta.json"
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text("utf-8"))
+                    finfo = meta.get("files", {}).get(path, {})
+                    if finfo.get("sha"):
+                        return finfo["sha"]
+                except Exception:
+                    pass
         self._increment_api()
         try:
-            contents = self.g.get_repo(repo_full_name).get_contents(path)
+            repo = self.g.get_repo(repo_full_name)
+            try:
+                # Intento de obtener SHA fresco usando el último commit como ref para evitar el cache de GitHub API
+                branch = repo.get_branch(repo.default_branch)
+                ref_sha = branch.commit.sha
+                contents = repo.get_contents(path, ref=ref_sha)
+            except Exception:
+                contents = repo.get_contents(path)
+            
             if isinstance(contents, list):
                 return None
             return contents.sha
@@ -668,14 +677,34 @@ class GitHubSyncService:
                 repo.update_file(path, message, content, sha)
             except Exception as first_err:
                 logger.warning(f"Primer intento de commit falló ({first_err}). Obteniendo último SHA de GitHub para reintentar.")
-                self._increment_api()
-                latest_contents = repo.get_contents(path)
-                if not isinstance(latest_contents, list):
-                    latest_sha = latest_contents.sha
-                    logger.info(f"Reintentando commit con el nuevo SHA obtenido: {latest_sha}")
-                    repo.update_file(path, message, content, latest_sha)
-                else:
-                    raise first_err
+                try:
+                    self._increment_api()
+                    # Intento 1: Obtener SHA fresco usando ref=latest_commit_sha para saltar la caché
+                    default_branch = repo.default_branch
+                    branch = repo.get_branch(default_branch)
+                    latest_commit_sha = branch.commit.sha
+                    logger.info(f"Obteniendo contenido fresco usando ref={latest_commit_sha} en la rama {default_branch}")
+                    latest_contents = repo.get_contents(path, ref=latest_commit_sha)
+                    if not isinstance(latest_contents, list):
+                        latest_sha = latest_contents.sha
+                        logger.info(f"Reintentando commit con el nuevo SHA obtenido (ref): {latest_sha}")
+                        repo.update_file(path, message, content, latest_sha, branch=default_branch)
+                    else:
+                        raise first_err
+                except Exception as retry_err:
+                    logger.warning(f"Reintento de commit con ref falló ({retry_err}). Probando obtener contents simple sin ref.")
+                    try:
+                        self._increment_api()
+                        latest_contents = repo.get_contents(path)
+                        if not isinstance(latest_contents, list):
+                            latest_sha = latest_contents.sha
+                            logger.info(f"Reintentando commit con el nuevo SHA simple: {latest_sha}")
+                            repo.update_file(path, message, content, latest_sha)
+                        else:
+                            raise retry_err
+                    except Exception as final_err:
+                        logger.error(f"Todos los intentos de commit fallaron. Error final: {final_err}")
+                        raise final_err
             
             _cache_put("github", repo_full_name, path, content, "")
             _cache_clear_repo("github", repo_full_name)
