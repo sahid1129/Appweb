@@ -664,7 +664,19 @@ class GitHubSyncService:
         self._increment_api()
         try:
             repo = self.g.get_repo(repo_full_name)
-            repo.update_file(path, message, content, sha)
+            try:
+                repo.update_file(path, message, content, sha)
+            except Exception as first_err:
+                logger.warning(f"Primer intento de commit falló ({first_err}). Obteniendo último SHA de GitHub para reintentar.")
+                self._increment_api()
+                latest_contents = repo.get_contents(path)
+                if not isinstance(latest_contents, list):
+                    latest_sha = latest_contents.sha
+                    logger.info(f"Reintentando commit con el nuevo SHA obtenido: {latest_sha}")
+                    repo.update_file(path, message, content, latest_sha)
+                else:
+                    raise first_err
+            
             _cache_put("github", repo_full_name, path, content, "")
             _cache_clear_repo("github", repo_full_name)
             return True
