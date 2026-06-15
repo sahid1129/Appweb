@@ -39,7 +39,23 @@ import hashlib
 import secrets
 from fastapi.responses import JSONResponse
 
-_ACTIVE_SESSION_TOKEN = None
+# Helper functions for multi-worker session token persistence
+SESSION_TOKEN_PATH = Path(__file__).resolve().parent.parent / ".session_token"
+
+def get_active_session_token() -> Optional[str]:
+    if SESSION_TOKEN_PATH.exists():
+        try:
+            return SESSION_TOKEN_PATH.read_text("utf-8").strip()
+        except Exception:
+            pass
+    return None
+
+def set_active_session_token(token: str):
+    try:
+        SESSION_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SESSION_TOKEN_PATH.write_text(token, "utf-8")
+    except Exception:
+        pass
 
 def hash_password(password: str, salt: bytes = None) -> str:
     if salt is None:
@@ -67,12 +83,19 @@ async def dynamic_auth_middleware(request: Request, call_next):
     
     # Check session authentication first for API routes
     cfg = load_config()
-    pw_hash = cfg.get("app_password_hash", "")
+    pw_hash = os.environ.get("APP_PASSWORD_HASH")
+    if not pw_hash:
+        raw_pw = os.environ.get("APP_PASSWORD")
+        if raw_pw:
+            pw_hash = hash_password(raw_pw)
+        else:
+            pw_hash = cfg.get("app_password_hash", "")
     
     if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/sync/drive/callback"):
         if pw_hash:
             session_token = request.headers.get("x-session-token") or request.query_params.get("token")
-            if not session_token or session_token != _ACTIVE_SESSION_TOKEN:
+            active_token = get_active_session_token()
+            if not session_token or session_token != active_token:
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing session token"})
                 
     # Extract GitHub Token
@@ -970,21 +993,34 @@ def copilot_endpoint(payload: CopilotPayload):
 @app.get("/api/auth/status")
 def auth_status():
     cfg = load_config()
-    password_set = bool(cfg.get("app_password_hash", ""))
-    username = cfg.get("app_username", "")
+    username = os.environ.get("APP_USERNAME") or cfg.get("app_username", "")
+    
+    # Check if password hash is in env or config
+    pw_hash = os.environ.get("APP_PASSWORD_HASH")
+    if not pw_hash:
+        raw_pw = os.environ.get("APP_PASSWORD")
+        if raw_pw:
+            pw_hash = hash_password(raw_pw)
+        else:
+            pw_hash = cfg.get("app_password_hash", "")
+            
+    password_set = bool(pw_hash)
     return {"success": True, "password_set": password_set, "username": username}
 
 @app.get("/api/auth/verify")
 def auth_verify(request: Request):
     token = request.headers.get("x-session-token")
-    if token and token == _ACTIVE_SESSION_TOKEN:
+    active_token = get_active_session_token()
+    if token and token == active_token:
         return {"success": True}
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 @app.post("/api/auth/setup")
 def auth_setup(payload: SetupPasswordPayload):
     cfg = load_config()
-    if cfg.get("app_password_hash", ""):
+    # Check if password is set in env or config
+    pw_hash = os.environ.get("APP_PASSWORD_HASH") or os.environ.get("APP_PASSWORD") or cfg.get("app_password_hash", "")
+    if pw_hash:
         raise HTTPException(status_code=400, detail="El password ya está configurado")
         
     username = payload.username.strip()
@@ -999,15 +1035,23 @@ def auth_setup(payload: SetupPasswordPayload):
     cfg["app_password_hash"] = h
     save_config(cfg)
     
-    global _ACTIVE_SESSION_TOKEN
-    _ACTIVE_SESSION_TOKEN = secrets.token_hex(32)
-    return {"success": True, "token": _ACTIVE_SESSION_TOKEN}
+    token = secrets.token_hex(32)
+    set_active_session_token(token)
+    return {"success": True, "token": token}
 
 @app.post("/api/auth/login")
 def auth_login(payload: LoginPayload):
     cfg = load_config()
-    pw_hash = cfg.get("app_password_hash", "")
-    username_stored = cfg.get("app_username", "")
+    
+    username_stored = os.environ.get("APP_USERNAME") or cfg.get("app_username", "")
+    pw_hash = os.environ.get("APP_PASSWORD_HASH")
+    if not pw_hash:
+        raw_pw = os.environ.get("APP_PASSWORD")
+        if raw_pw:
+            pw_hash = hash_password(raw_pw)
+        else:
+            pw_hash = cfg.get("app_password_hash", "")
+            
     if not pw_hash:
         raise HTTPException(status_code=400, detail="No hay password configurado. Realiza el setup primero.")
         
@@ -1015,12 +1059,15 @@ def auth_login(payload: LoginPayload):
     if username_input != username_stored.strip().lower() or not verify_password(pw_hash, payload.password):
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
         
-    global _ACTIVE_SESSION_TOKEN
-    _ACTIVE_SESSION_TOKEN = secrets.token_hex(32)
-    return {"success": True, "token": _ACTIVE_SESSION_TOKEN}
+    token = secrets.token_hex(32)
+    set_active_session_token(token)
+    return {"success": True, "token": token}
 
 @app.post("/api/auth/logout")
 def auth_logout():
-    global _ACTIVE_SESSION_TOKEN
-    _ACTIVE_SESSION_TOKEN = None
+    if SESSION_TOKEN_PATH.exists():
+        try:
+            SESSION_TOKEN_PATH.unlink()
+        except Exception:
+            pass
     return {"success": True}
