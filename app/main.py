@@ -14,7 +14,8 @@ from app.services.sync_service import (
     GoogleDriveSyncService,
     GitHubSyncService,
     load_config,
-    save_config
+    save_config,
+    _MEMORY_CONFIG
 )
 from app.services.file_manager import FileManagerService
 from app.services.explorer import ExplorerService
@@ -54,6 +55,23 @@ async def dynamic_auth_middleware(request: Request, call_next):
         except Exception:
             pass
             
+    # Extract AI Keys and Provider Settings
+    ds_key = request.headers.get("x-deepseek-api-key")
+    if ds_key:
+        _MEMORY_CONFIG["deepseek_api_key"] = ds_key
+        
+    gem_key = request.headers.get("x-gemini-api-key")
+    if gem_key:
+        _MEMORY_CONFIG["gemini_api_key"] = gem_key
+        
+    ai_provider = request.headers.get("x-active-ai-provider")
+    if ai_provider:
+        _MEMORY_CONFIG["active_ai_provider"] = ai_provider
+        
+    gem_model = request.headers.get("x-gemini-model")
+    if gem_model:
+        _MEMORY_CONFIG["gemini_model"] = gem_model
+        
     response = await call_next(request)
     return response
 

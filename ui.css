@@ -279,9 +279,22 @@ html, body { height: 100%; overflow: hidden; font-family: var(--font); font-size
 }
 
 /* Loading spinner */
-#loading { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.7); z-index: 999; align-items: center; justify-content: center; }
+#sidebar-explorer-pane {
+  position: relative;
+}
+#loading {
+  display: none;
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--sidebar-bg);
+  opacity: 0.85;
+  z-index: 99;
+  align-items: center;
+  justify-content: center;
+  pointer-events: all; /* Blocks mouse clicks inside pane */
+}
 #loading.active { display: flex; }
-.spinner { width: 32px; height: 32px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+.spinner { width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Drag over */

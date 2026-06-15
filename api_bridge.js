@@ -9,7 +9,7 @@ const API_BASE_URL = window.location.hostname === "localhost" || window.location
   ? "http://localhost:8000"
   : "https://appweb-o7pl.onrender.com"; // En producción, si se aloja en el mismo servidor, se puede usar ruta relativa. Si no, poner URL de Render.
 
-// Intercept fetch calls to automatically attach authentication headers from localStorage
+// Intercept fetch calls to automatically attach authentication & AI headers from localStorage
 const originalFetch = window.fetch;
 window.fetch = function (input, init) {
   const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
@@ -17,20 +17,71 @@ window.fetch = function (input, init) {
     init = init || {};
     let headers = init.headers || {};
     
-    const token = localStorage.getItem("github_token");
-    if (token) {
+    const setHeader = (name, value) => {
       if (headers instanceof Headers) {
-        headers.set("X-GitHub-Token", token);
+        headers.set(name, value);
       } else if (Array.isArray(headers)) {
-        headers.push(["X-GitHub-Token", token]);
+        headers.push([name, value]);
       } else {
-        headers["X-GitHub-Token"] = token;
+        headers[name] = value;
       }
-    }
+    };
+
+    const token = localStorage.getItem("github_token");
+    if (token) setHeader("X-GitHub-Token", token);
+
+    const dsKey = localStorage.getItem("deepseek_api_key");
+    if (dsKey) setHeader("X-DeepSeek-API-Key", dsKey);
+
+    const gemKey = localStorage.getItem("gemini_api_key");
+    if (gemKey) setHeader("X-Gemini-API-Key", gemKey);
+
+    const aiProvider = localStorage.getItem("active_ai_provider");
+    if (aiProvider) setHeader("X-Active-AI-Provider", aiProvider);
+
+    const gemModel = localStorage.getItem("gemini_model");
+    if (gemModel) setHeader("X-Gemini-Model", gemModel);
+
     init.headers = headers;
   }
   return originalFetch(input, init);
 };
+
+// Helper function to prune old GitHub cached files (keeps max 30 items)
+function cleanOldGitHubCache(newKey) {
+  try {
+    const prefix = "gh_cache_";
+    const cacheItems = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith(prefix)) {
+        try {
+          const val = JSON.parse(localStorage.getItem(key));
+          cacheItems.push({ key: key, time: (val && val.cachedAt) || 0 });
+        } catch (e) {}
+      }
+    }
+    
+    try {
+      const newItem = JSON.parse(localStorage.getItem(newKey));
+      if (newItem) {
+        newItem.cachedAt = Date.now();
+        localStorage.setItem(newKey, JSON.stringify(newItem));
+      }
+    } catch (e) {}
+
+    if (cacheItems.length > 30) {
+      cacheItems.sort((a, b) => a.time - b.time);
+      const limit = cacheItems.length - 30;
+      for (let i = 0; i < limit; i++) {
+        localStorage.removeItem(cacheItems[i].key);
+      }
+      console.log(`Caché de GitHub optimizado: se liberaron ${limit} notas antiguas.`);
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}
 
 class QtSignalMock {
   constructor(name) {
@@ -457,8 +508,30 @@ const mockBridge = {
   },
 
   githubFileClicked: async function (repo, path, name) {
+    let cachedData = null;
+    const cacheKey = `gh_cache_${repo}_${path}`;
     try {
-      this.showLoading.emit(true);
+      // Intentar cargar instantáneamente desde caché
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          cachedData = JSON.parse(cached);
+          if (cachedData && cachedData.content) {
+            this._currentEditorPath = cachedData.path;
+            this._currentFileParams = cachedData.info;
+            this.showEditor.emit(JSON.stringify(cachedData));
+            this.setStatus.emit(`⚡ Archivo cargado desde caché local (sincronizando...)`);
+          }
+        } catch (e) {
+          console.error("Error al leer caché:", e);
+        }
+      }
+
+      // Si no hay caché, bloqueamos el explorador. Si hay caché, no bloqueamos la interfaz (carga en background)
+      if (!cachedData) {
+        this.showLoading.emit(true);
+      }
+      
       this.setStatus.emit(`Descargando de GitHub: ${name}...`);
       const res = await fetch(`${API_BASE_URL}/api/file/read?path=${encodeURIComponent(path)}&source=github&remote_repo=${encodeURIComponent(repo)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -467,8 +540,23 @@ const mockBridge = {
       this._currentEditorPath = data.path;
       this._currentFileParams = data.info;
 
-      this.showEditor.emit(JSON.stringify(data));
-      this.setStatus.emit(`✅ Archivo descargado de GitHub: ${name}`);
+      // Guardar en caché y limpiar antiguas
+      try {
+        localStorage.setItem(cacheKey, JSON.stringify(data));
+        cleanOldGitHubCache(cacheKey);
+      } catch (e) {}
+
+      // Si no había caché, o el contenido remoto es diferente al caché, actualizar editor
+      // Pero solo si el editor no está sucio (no hay cambios sin guardar) para evitar sobreescribir al usuario
+      const isDirty = typeof editorDirty !== 'undefined' ? editorDirty : false;
+      if (!cachedData || cachedData.content !== data.content) {
+        if (!isDirty) {
+          this.showEditor.emit(JSON.stringify(data));
+        }
+        this.setStatus.emit(`✅ Archivo descargado de GitHub: ${name}`);
+      } else {
+        this.setStatus.emit(`✅ Archivo sincronizado con GitHub: ${name}`);
+      }
     } catch (err) {
       this.setStatus.emit(`❌ Error descargando archivo: ${err.message}`);
     } finally {
@@ -821,21 +909,34 @@ const mockBridge = {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
       const settings = {
-        provider: config.active_ai_provider || "deepseek",
-        gemini_model: config.gemini_model || "gemini-1.5-flash"
+        active_provider: localStorage.getItem("active_ai_provider") || config.active_ai_provider || "deepseek",
+        deepseek_api_key: localStorage.getItem("deepseek_api_key") || config.deepseek_api_key || "",
+        gemini_api_key: localStorage.getItem("gemini_api_key") || config.gemini_api_key || "",
+        gemini_model: localStorage.getItem("gemini_model") || config.gemini_model || "gemini-1.5-flash"
       };
       callback(JSON.stringify(settings));
     } catch (err) {
-      callback(JSON.stringify({ provider: "deepseek", gemini_model: "gemini-1.5-flash" }));
+      callback(JSON.stringify({
+        active_provider: localStorage.getItem("active_ai_provider") || "deepseek",
+        deepseek_api_key: localStorage.getItem("deepseek_api_key") || "",
+        gemini_api_key: localStorage.getItem("gemini_api_key") || "",
+        gemini_model: localStorage.getItem("gemini_model") || "gemini-1.5-flash"
+      }));
     }
   },
 
   getDeepseekKey: function () {
-    return (window.appConfig && window.appConfig.deepseek_api_key) || "";
+    return localStorage.getItem("deepseek_api_key") || (window.appConfig && window.appConfig.deepseek_api_key) || "";
   },
 
   saveAiSettings: async function (provider, dsKey, gemKey, gemModel, callback) {
     try {
+      // Guardar en localStorage
+      localStorage.setItem("active_ai_provider", provider);
+      localStorage.setItem("deepseek_api_key", dsKey);
+      localStorage.setItem("gemini_api_key", gemKey);
+      localStorage.setItem("gemini_model", gemModel);
+
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
       config.active_ai_provider = provider;

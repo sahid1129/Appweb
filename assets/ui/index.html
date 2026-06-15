@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Launchpad</title>
-  <link rel="stylesheet" href="../editor/lib/toastui-editor.css">
-  <link rel="stylesheet" href="../editor/lib/github.min.css">
+  <link rel="stylesheet" href="assets/editor/lib/toastui-editor.css">
+  <link rel="stylesheet" href="assets/editor/lib/github.min.css">
   <link rel="stylesheet" href="ui.css">
 </head>
 <body>
@@ -54,6 +54,8 @@
             <button id="src-tab-drive" class="explorer-source-btn" onclick="setRemoteSourceFilter('drive')" title="Mostrar sólo notas de Google Drive">☁️ Drive</button>
           </div>
           <div id="tree"></div>
+          <!-- Loading overlay (explorer only) -->
+          <div id="loading"><div class="spinner"></div></div>
         </div>
 
         <!-- Chatbot Pane -->
@@ -195,8 +197,7 @@
     <div id="statusbar">Validando…</div>
   </div>
 
-  <!-- Loading overlay -->
-  <div id="loading"><div class="spinner"></div></div>
+
 
   <!-- Cloud dialog -->
   <div id="cloud-dialog">
@@ -568,10 +569,10 @@
   </div>
 
   <script src="api_bridge.js"></script>
-  <script src="../editor/lib/toastui-editor.js"></script>
-  <script src="../editor/lib/highlight.min.js"></script>
-  <script src="../editor/lib/mermaid.min.js"></script>
-  <script src="../editor/lib/pdf.min.js"></script>
+  <script src="assets/editor/lib/toastui-editor.js"></script>
+  <script src="assets/editor/lib/highlight.min.js"></script>
+  <script src="assets/editor/lib/mermaid.min.js"></script>
+  <script src="assets/editor/lib/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>

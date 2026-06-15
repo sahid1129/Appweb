@@ -54,6 +54,8 @@
             <button id="src-tab-drive" class="explorer-source-btn" onclick="setRemoteSourceFilter('drive')" title="Mostrar sólo notas de Google Drive">☁️ Drive</button>
           </div>
           <div id="tree"></div>
+          <!-- Loading overlay (explorer only) -->
+          <div id="loading"><div class="spinner"></div></div>
         </div>
 
         <!-- Chatbot Pane -->
@@ -195,8 +197,7 @@
     <div id="statusbar">Validando…</div>
   </div>
 
-  <!-- Loading overlay -->
-  <div id="loading"><div class="spinner"></div></div>
+
 
   <!-- Cloud dialog -->
   <div id="cloud-dialog">

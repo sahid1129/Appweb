@@ -25,15 +25,20 @@ def is_binary_file(suffix: str) -> bool:
     s = suffix.lower()
     return s not in EXT_TXT and s not in (".md", ".ipynb")
 
+_MEMORY_CONFIG = {}
+
 def load_config() -> dict:
+    cfg = {"roots": [], "github_token": "", "drive_token": "", "last_root": ""}
     if CONFIG_PATH.exists():
         try:
-            return json.loads(CONFIG_PATH.read_text("utf-8"))
+            cfg = json.loads(CONFIG_PATH.read_text("utf-8"))
         except Exception:
             pass
-    return {"roots": [], "github_token": "", "drive_token": "", "last_root": ""}
+    cfg.update(_MEMORY_CONFIG)
+    return cfg
 
 def save_config(data: dict):
+    _MEMORY_CONFIG.update(data)
     CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
 
 # ========== Cache Helpers ==========
