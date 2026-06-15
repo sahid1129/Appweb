@@ -582,13 +582,55 @@ const mockBridge = {
 
   // --- Google Drive Integrations ---
 
-  getDriveConfigStatus: function (callback) {
-    // Simulamos disponibilidad o cargamos del config pre-cargado
-    const status = {
-      has_creds: true,
-      is_authenticated: (window.appConfig && !!window.appConfig.drive_token)
+  getDriveConfigStatus: async function (callback) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/sync/drive/config_status`);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      callback(JSON.stringify({
+        has_creds: data.has_creds,
+        is_authenticated: data.is_authenticated
+      }));
+    } catch (err) {
+      callback(JSON.stringify({
+        has_creds: false,
+        is_authenticated: false
+      }));
+    }
+  },
+
+  selectDriveCreds: function () {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json";
+    input.onchange = e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async event => {
+        try {
+          const content = JSON.parse(event.target.result);
+          const res = await fetch(`${API_BASE_URL}/api/sync/drive/save_credentials`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(content)
+          });
+          const resData = await res.json();
+          if (res.ok && resData.success) {
+            this.setStatus.emit("✅ credentials.json guardado con éxito.");
+            if (typeof loadSettingsDriveSection === "function") {
+              loadSettingsDriveSection();
+            }
+          } else {
+            this.setStatus.emit("❌ Error al guardar credentials.json: " + (resData.detail || "Error desconocido"));
+          }
+        } catch (err) {
+          this.setStatus.emit("❌ El archivo no es un JSON válido.");
+        }
+      };
+      reader.readAsText(file);
     };
-    callback(JSON.stringify(status));
+    input.click();
   },
 
   getDriveBaseFolderId: function (callback) {

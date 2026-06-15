@@ -830,6 +830,29 @@ def get_drive_files(folder_id: str = "root"):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/sync/drive/config_status")
+def get_drive_config_status_endpoint():
+    from app.services.sync_service import CREDS_PATH, load_config
+    cfg = load_config()
+    return {
+        "success": True,
+        "has_creds": CREDS_PATH.exists(),
+        "is_authenticated": bool(cfg.get("drive_token", ""))
+    }
+
+@app.post("/api/sync/drive/save_credentials")
+def save_drive_credentials(payload: dict):
+    if "installed" not in payload and "web" not in payload:
+        raise HTTPException(status_code=400, detail="Formato de credenciales inválido. Debe contener 'installed' o 'web'.")
+    try:
+        import json
+        from app.services.sync_service import CREDS_PATH
+        CREDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        CREDS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/sync/github/files")
 def get_github_files(repo: str, path: str = ""):
     try:
