@@ -591,7 +591,22 @@ class GitHubSyncService:
             contents = repo.get_contents(path)
             if isinstance(contents, list):
                 return False
-            content_bytes = contents.decoded_content
+            
+            try:
+                content_bytes = contents.decoded_content
+            except Exception as decode_err:
+                logger.warning(f"Error decodificando contenido usando PyGithub: {decode_err}. Intentando descarga directa desde download_url.")
+                if hasattr(contents, "download_url") and contents.download_url:
+                    import urllib.request
+                    req = urllib.request.Request(contents.download_url)
+                    req.add_header("User-Agent", "FastAPI-App")
+                    if self._token:
+                        req.add_header("Authorization", f"token {self._token}")
+                    with urllib.request.urlopen(req) as response:
+                        content_bytes = response.read()
+                else:
+                    raise decode_err
+
             dest = Path(local_dest_path)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(content_bytes)
