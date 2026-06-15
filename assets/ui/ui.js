@@ -724,7 +724,7 @@ function openEditorDirect(path, name, content, source) {
 
   var container = document.getElementById("markdown-editor-container");
   container.innerHTML = "";
-  editorViewMode = "edit";
+  editorViewMode = "quick";
   updateEditorModeButtons();
 
   if (editorInstance) {
@@ -759,7 +759,7 @@ function openEditorDirect(path, name, content, source) {
     el: container,
     height: "100%",
     initialValue: content || "",
-    initialEditType: "wysiwyg",
+    initialEditType: "markdown",
     previewStyle: "tab",
     hideModeSwitch: true,
     usageStatistics: false,
@@ -789,11 +789,11 @@ function openEditorDirect(path, name, content, source) {
         }
       },
       image(node, context) {
-        if (context && !context.entering) {
-          return;
-        }
         if (context && typeof context.skipChildren === 'function') {
           context.skipChildren();
+        }
+        if (context && !context.entering) {
+          return { type: 'html', content: '' };
         }
         var src = node.destination || '';
         var alt = node.firstChild ? node.firstChild.literal : '';
@@ -940,6 +940,7 @@ function openEditorDirect(path, name, content, source) {
   // Initialize history and word count with initial file content
   initHistory(content);
   updateWordCount();
+  setEditorViewMode("quick");
 }
 
 function setupMermaidObserver() {
