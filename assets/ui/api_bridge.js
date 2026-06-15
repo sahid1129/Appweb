@@ -5,9 +5,32 @@
  */
 
 // Define global base URL for the API
-const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:"
   ? "http://localhost:8000"
-  : ""; // En producción, si se aloja en el mismo servidor, se puede usar ruta relativa. Si no, poner URL de Render.
+  : "https://appweb-o7pl.onrender.com"; // En producción, si se aloja en el mismo servidor, se puede usar ruta relativa. Si no, poner URL de Render.
+
+// Intercept fetch calls to automatically attach authentication headers from localStorage
+const originalFetch = window.fetch;
+window.fetch = function (input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
+  if (url.startsWith(API_BASE_URL)) {
+    init = init || {};
+    let headers = init.headers || {};
+    
+    const token = localStorage.getItem("github_token");
+    if (token) {
+      if (headers instanceof Headers) {
+        headers.set("X-GitHub-Token", token);
+      } else if (Array.isArray(headers)) {
+        headers.push(["X-GitHub-Token", token]);
+      } else {
+        headers["X-GitHub-Token"] = token;
+      }
+    }
+    init.headers = headers;
+  }
+  return originalFetch(input, init);
+};
 
 class QtSignalMock {
   constructor(name) {
@@ -59,7 +82,7 @@ const mockBridge = {
   _currentFileParams: { source: "local", remote_id: null, remote_repo: null, sha: null },
   _currentEditorPath: "",
 
-  _pushNav: function(path) {
+  _pushNav: function (path) {
     if (this._navIndex < this._navHistory.length - 1) {
       this._navHistory = this._navHistory.slice(0, this._navIndex + 1);
     }
@@ -69,12 +92,12 @@ const mockBridge = {
 
   // --- Qt Slots (JS → calls these) ---
 
-  ready: async function() {
+  ready: async function () {
     console.log("API Bridge ready. Loading workspace tree...");
     await this.refreshTree();
   },
 
-  refreshTree: async function() {
+  refreshTree: async function () {
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/tree`);
@@ -88,7 +111,7 @@ const mockBridge = {
     }
   },
 
-  itemClicked: async function(path, typ) {
+  itemClicked: async function (path, typ) {
     console.log("API Bridge itemClicked:", path, typ);
     if (typ === "github_file") {
       this.setStatus.emit("Usa el menú contextual de GitHub para abrir archivos");
@@ -110,7 +133,7 @@ const mockBridge = {
         const res = await fetch(`${API_BASE_URL}/api/folder/info?path=${encodeURIComponent(path)}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const result = await res.json();
-        
+
         if (result.type === "bloque") {
           this.showBlocInfo.emit(JSON.stringify(result.data));
         } else {
@@ -122,7 +145,7 @@ const mockBridge = {
         const res = await fetch(`${API_BASE_URL}/api/file/read?path=${encodeURIComponent(path)}&source=local`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        
+
         this._currentEditorPath = path;
         this._currentFileParams = { source: "local", remote_id: null, remote_repo: null, sha: null };
 
@@ -169,7 +192,7 @@ const mockBridge = {
     }
   },
 
-  navBack: function() {
+  navBack: function () {
     if (this._navIndex > 0) {
       this._navIndex--;
       const target = this._navHistory[this._navIndex];
@@ -177,7 +200,7 @@ const mockBridge = {
     }
   },
 
-  navForward: function() {
+  navForward: function () {
     if (this._navIndex < this._navHistory.length - 1) {
       this._navIndex++;
       const target = this._navHistory[this._navIndex];
@@ -185,7 +208,7 @@ const mockBridge = {
     }
   },
 
-  navUp: function() {
+  navUp: function () {
     if (this._navHistory.length > 0 && this._navIndex >= 0) {
       const current = this._navHistory[this._navIndex].path;
       // Obtener ruta padre (sencillo reemplazo de string para separar la última carpeta)
@@ -199,29 +222,42 @@ const mockBridge = {
     }
   },
 
-  saveFile: async function(path, content) {
+  saveFile: async function (path, content) {
     try {
       this.showLoading.emit(true);
+
+      // Buscar metadatos correctos de la pestaña en openTabs para evitar cruces
+      let tabInfo = { source: "local", remote_id: null, remote_repo: null, sha: null };
+      const tabs = (typeof openTabs !== 'undefined') ? openTabs : [];
+      const tab = tabs.find(t => t.path === path);
+      if (tab && tab.info) {
+        tabInfo = tab.info;
+      }
+
       const payload = {
         path: path,
         content: content,
-        source: this._currentFileParams.source,
-        remote_id: this._currentFileParams.remote_id,
-        remote_repo: this._currentFileParams.remote_repo,
-        sha: this._currentFileParams.sha
+        source: tabInfo.source || this._currentFileParams.source,
+        remote_id: tabInfo.remote_id || this._currentFileParams.remote_id,
+        remote_repo: tabInfo.remote_repo || this._currentFileParams.remote_repo,
+        sha: tabInfo.sha || this._currentFileParams.sha
       };
-      
+
       const res = await fetch(`${API_BASE_URL}/api/file/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      
+
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      
+
       if (data.sha) {
         this._currentFileParams.sha = data.sha;
+        // Actualizar el SHA en la pestaña activa para evitar conflictos 409
+        if (tab && tab.info) {
+          tab.info.sha = data.sha;
+        }
       }
       this.saveResult.emit(true);
       this.setStatus.emit("✅ Guardado con éxito.");
@@ -234,52 +270,52 @@ const mockBridge = {
     }
   },
 
-  commitActiveFile: async function() {
+  commitActiveFile: async function () {
     // En web, commit y saveFile están enlazados si se selecciona saveFile.
     // De todos modos, implementamos commitActiveFile explícitamente:
     try {
       this.showLoading.emit(true);
       this.setStatus.emit("📤 Subiendo cambios a la nube...");
-      
+
       // En la web leemos el editor actual
       // Pero como saveFile ya realiza el commit en la API para archivos de GitHub/Drive,
       // simplemente informamos éxito
       this.setStatus.emit("✅ Sincronizado en la nube con éxito");
-    } catch(err) {
+    } catch (err) {
       this.setStatus.emit(`❌ Error en sincronización: ${err.message}`);
     } finally {
       this.showLoading.emit(false);
     }
   },
 
-  openInExplorer: function(path) {
+  openInExplorer: function (path) {
     // Dado que estamos en web, no podemos abrir el explorador de archivos nativo directamente
     // por restricciones de sandbox del navegador. Informamos de forma amigable.
     this.setStatus.emit(`📂 Ubicación del archivo en tu máquina: ${path}`);
     console.log("openInExplorer no soportado directamente en web:", path);
   },
 
-  openFileExternally: function(path) {
+  openFileExternally: function (path) {
     this.setStatus.emit(`📂 No es posible abrir externamente en web: ${path}`);
   },
 
-  changeRoot: async function() {
+  changeRoot: async function () {
     this.setStatus.emit("Cambiar de raíz local no es soportado directamente en web. Configúralo en Ajustes.");
   },
 
-  selectRootPath: async function(path) {
+  selectRootPath: async function (path) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
       config.last_root = path;
       if (!config.roots.includes(path)) config.roots.push(path);
-      
+
       await fetch(`${API_BASE_URL}/api/config/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config })
       });
-      
+
       this.setStatus.emit(`Carpeta raíz cambiada a: ${path}`);
       await this.refreshTree();
     } catch (err) {
@@ -287,12 +323,12 @@ const mockBridge = {
     }
   },
 
-  removeRootPath: async function(path) {
+  removeRootPath: async function (path) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
       config.roots = config.roots.filter(r => r !== path);
-      
+
       await fetch(`${API_BASE_URL}/api/config/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -304,7 +340,7 @@ const mockBridge = {
     }
   },
 
-  getRootsJson: async function(callback) {
+  getRootsJson: async function (callback) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
@@ -316,14 +352,11 @@ const mockBridge = {
 
   // --- GitHub Integrations ---
 
-  getGithubToken: function() {
-    // Para simplificar, consultamos la sesión de config.json sincrónicamente o simulamos vacío
-    // Pero en JS, ui.js espera que retorne sincrónicamente.
-    // Como getGithubToken se llama sincrónicamente, podemos pre-cargar la configuración en window.config al iniciar
-    return (window.appConfig && window.appConfig.github_token) || "";
+  getGithubToken: function () {
+    return localStorage.getItem("github_token") || (window.appConfig && window.appConfig.github_token) || "";
   },
 
-  testGithubConnection: async function(token, callback) {
+  testGithubConnection: async function (token, callback) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/sync/github/config`, {
         method: "POST",
@@ -333,7 +366,8 @@ const mockBridge = {
       const data = await res.json();
       callback(JSON.stringify(data));
       if (data.success) {
-        // Guardar token en local config
+        // Guardar token en localStorage y window.appConfig
+        localStorage.setItem("github_token", token);
         if (window.appConfig) window.appConfig.github_token = token;
         await this.refreshTree();
       }
@@ -342,18 +376,19 @@ const mockBridge = {
     }
   },
 
-  clearGithubToken: async function() {
+  clearGithubToken: async function () {
     await fetch(`${API_BASE_URL}/api/sync/github/clear`, { method: "POST" });
+    localStorage.removeItem("github_token");
     if (window.appConfig) window.appConfig.github_token = "";
     this.setStatus.emit("Token de GitHub eliminado");
     await this.refreshTree();
   },
 
-  getGithubSelectedRepo: function(callback) {
+  getGithubSelectedRepo: function (callback) {
     callback((window.appConfig && window.appConfig.github_selected_repo) || "");
   },
 
-  setGithubSelectedRepo: async function(repo) {
+  setGithubSelectedRepo: async function (repo) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
@@ -370,11 +405,11 @@ const mockBridge = {
     }
   },
 
-  getGithubBasePath: function(callback) {
+  getGithubBasePath: function (callback) {
     callback((window.appConfig && window.appConfig.github_base_path) || "");
   },
 
-  saveGithubBasePath: async function(path) {
+  saveGithubBasePath: async function (path) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
@@ -386,12 +421,12 @@ const mockBridge = {
       });
       if (window.appConfig) window.appConfig.github_base_path = path;
       await this.refreshTree();
-    } catch(err) {
+    } catch (err) {
       console.error(err);
     }
   },
 
-  fetchGithubFolders: async function() {
+  fetchGithubFolders: async function () {
     try {
       const repo = (window.appConfig && window.appConfig.github_selected_repo) || "";
       if (!repo) {
@@ -406,7 +441,7 @@ const mockBridge = {
     }
   },
 
-  githubBrowse: async function(repo, path) {
+  githubBrowse: async function (repo, path) {
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/sync/github/files?repo=${encodeURIComponent(repo)}&path=${encodeURIComponent(path)}`);
@@ -421,17 +456,17 @@ const mockBridge = {
     }
   },
 
-  githubFileClicked: async function(repo, path, name) {
+  githubFileClicked: async function (repo, path, name) {
     try {
       this.showLoading.emit(true);
       this.setStatus.emit(`Descargando de GitHub: ${name}...`);
       const res = await fetch(`${API_BASE_URL}/api/file/read?path=${encodeURIComponent(path)}&source=github&remote_repo=${encodeURIComponent(repo)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      
+
       this._currentEditorPath = data.path;
       this._currentFileParams = data.info;
-      
+
       this.showEditor.emit(JSON.stringify(data));
       this.setStatus.emit(`✅ Archivo descargado de GitHub: ${name}`);
     } catch (err) {
@@ -443,7 +478,7 @@ const mockBridge = {
 
   // --- Google Drive Integrations ---
 
-  getDriveConfigStatus: function(callback) {
+  getDriveConfigStatus: function (callback) {
     // Simulamos disponibilidad o cargamos del config pre-cargado
     const status = {
       has_creds: true,
@@ -452,11 +487,11 @@ const mockBridge = {
     callback(JSON.stringify(status));
   },
 
-  getDriveBaseFolderId: function(callback) {
+  getDriveBaseFolderId: function (callback) {
     callback((window.appConfig && window.appConfig.drive_base_folder_id) || "");
   },
 
-  saveDriveBaseFolderId: async function(folderId) {
+  saveDriveBaseFolderId: async function (folderId) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
@@ -473,7 +508,7 @@ const mockBridge = {
     }
   },
 
-  fetchDriveFolders: async function() {
+  fetchDriveFolders: async function () {
     try {
       const res = await fetch(`${API_BASE_URL}/api/sync/drive/folders`);
       const folders = await res.json();
@@ -483,24 +518,24 @@ const mockBridge = {
     }
   },
 
-  clearDriveToken: async function() {
+  clearDriveToken: async function () {
     await fetch(`${API_BASE_URL}/api/sync/drive/clear`, { method: "POST" });
     if (window.appConfig) window.appConfig.drive_token = "";
     this.setStatus.emit("Credenciales de Google Drive eliminadas");
     await this.refreshTree();
   },
 
-  syncDrive: async function() {
+  syncDrive: async function () {
     this.setStatus.emit("Sincronizando Google Drive...");
     await this.refreshTree();
   },
 
-  driveFolderClicked: async function(path, remoteId) {
+  driveFolderClicked: async function (path, remoteId) {
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/sync/drive/files?folder_id=${encodeURIComponent(remoteId)}`);
       const data = await res.json();
-      
+
       // Simulamos la emisión del showFolderInfo similar a _send_drive_subtree en Python
       if (data.success) {
         const filesItems = data.files.map(f => {
@@ -514,7 +549,7 @@ const mockBridge = {
             color: isFolder ? "#7c3aed" : "#6b7280"
           };
         });
-        
+
         this.showFolderInfo.emit(JSON.stringify({
           title: `📁 ${path.split('/').pop() || 'Drive'}`,
           meta: `${data.files.length} elementos en Google Drive`,
@@ -529,17 +564,17 @@ const mockBridge = {
     }
   },
 
-  driveFileClicked: async function(remoteId, name) {
+  driveFileClicked: async function (remoteId, name) {
     try {
       this.showLoading.emit(true);
       this.setStatus.emit(`Descargando de Drive: ${name}...`);
       const res = await fetch(`${API_BASE_URL}/api/file/read?path=&source=drive&remote_id=${encodeURIComponent(remoteId)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      
+
       this._currentEditorPath = data.path;
       this._currentFileParams = data.info;
-      
+
       this.showEditor.emit(JSON.stringify(data));
       this.setStatus.emit(`✅ Archivo descargado de Google Drive: ${name}`);
     } catch (err) {
@@ -551,11 +586,11 @@ const mockBridge = {
 
   // --- Remote filter source ---
 
-  getActiveRemoteSource: function(callback) {
+  getActiveRemoteSource: function (callback) {
     callback((window.appConfig && window.appConfig.active_remote_source) || "all");
   },
 
-  setActiveRemoteSource: async function(source) {
+  setActiveRemoteSource: async function (source) {
     try {
       await fetch(`${API_BASE_URL}/api/sync/active-source`, {
         method: "POST",
@@ -571,7 +606,7 @@ const mockBridge = {
 
   // --- File manipulations ---
 
-  createNewFile: async function(parentFolder) {
+  createNewFile: async function (parentFolder) {
     const filename = prompt("Nombre del nuevo archivo (ej: nota.md):", "nota.md");
     if (!filename) return;
     try {
@@ -594,12 +629,45 @@ const mockBridge = {
     }
   },
 
-  createCloudFile: async function(parentFolder, filename) {
-    // Equivalente para nubes
-    this.setStatus.emit("Operación no implementada para la nube directamente.");
+  createCloudFile: async function (parentFolder, filename) {
+    try {
+      this.showLoading.emit(true);
+      this.setStatus.emit(`Creando archivo '${filename}' en la nube...`);
+      const res = await fetch(`${API_BASE_URL}/api/file/create-cloud`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_folder: parentFolder, filename: filename })
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || `HTTP ${res.status}`);
+      }
+      
+      const data = await res.json();
+      if (data.success) {
+        this.setStatus.emit(`✅ Archivo creado en la nube: ${filename}`);
+        await this.refreshTree();
+        
+        // Auto-abrir el archivo creado
+        if (data.repo && data.full_path) {
+          // Es GitHub
+          await this.githubFileClicked(data.repo, data.full_path, filename);
+        } else if (data.remote_id) {
+          // Es Google Drive
+          await this.driveFileClicked(data.remote_id, filename);
+        }
+      } else {
+        throw new Error("Error desconocido");
+      }
+    } catch (err) {
+      this.setStatus.emit(`❌ Error creando archivo en la nube: ${err.message}`);
+    } finally {
+      this.showLoading.emit(false);
+    }
   },
 
-  deleteItem: async function(path) {
+  deleteItem: async function (path) {
     if (!confirm(`¿Estás seguro de eliminar permanentemente ${path.split(/[\\/]/).pop()}?`)) return;
     try {
       this.showLoading.emit(true);
@@ -621,7 +689,7 @@ const mockBridge = {
     }
   },
 
-  deleteCloudItem: async function(nodeStr) {
+  deleteCloudItem: async function (nodeStr) {
     const node = JSON.parse(nodeStr);
     if (!confirm(`¿Estás seguro de eliminar de la nube ${node.name}?`)) return;
     try {
@@ -649,7 +717,7 @@ const mockBridge = {
     }
   },
 
-  renameItem: async function(path, newName) {
+  renameItem: async function (path, newName) {
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/file/rename`, {
@@ -669,7 +737,7 @@ const mockBridge = {
     }
   },
 
-  renameCloudItem: async function(nodeStr, newName) {
+  renameCloudItem: async function (nodeStr, newName) {
     const node = JSON.parse(nodeStr);
     try {
       this.showLoading.emit(true);
@@ -697,7 +765,7 @@ const mockBridge = {
     }
   },
 
-  moveItem: async function(srcPath, dstFolder) {
+  moveItem: async function (srcPath, dstFolder) {
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/file/move`, {
@@ -717,7 +785,7 @@ const mockBridge = {
     }
   },
 
-  getFileBase64: async function(path, callback) {
+  getFileBase64: async function (path, callback) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/file/base64?path=${encodeURIComponent(path)}`);
       const data = await res.json();
@@ -731,7 +799,7 @@ const mockBridge = {
     }
   },
 
-  saveFileBase64: async function(path, base64Data, callback) {
+  saveFileBase64: async function (path, base64Data, callback) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/file/base64/save`, {
         method: "POST",
@@ -748,7 +816,7 @@ const mockBridge = {
 
   // --- AI Integrations ---
 
-  getAiSettings: async function(callback) {
+  getAiSettings: async function (callback) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
@@ -762,11 +830,11 @@ const mockBridge = {
     }
   },
 
-  getDeepseekKey: function() {
+  getDeepseekKey: function () {
     return (window.appConfig && window.appConfig.deepseek_api_key) || "";
   },
 
-  saveAiSettings: async function(provider, dsKey, gemKey, gemModel, callback) {
+  saveAiSettings: async function (provider, dsKey, gemKey, gemModel, callback) {
     try {
       const configRes = await fetch(`${API_BASE_URL}/api/config`);
       const config = await configRes.json();
@@ -774,28 +842,28 @@ const mockBridge = {
       config.deepseek_api_key = dsKey;
       config.gemini_api_key = gemKey;
       config.gemini_model = gemModel;
-      
+
       const saveRes = await fetch(`${API_BASE_URL}/api/config/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ config })
       });
       const data = await saveRes.json();
-      
+
       if (window.appConfig) {
         window.appConfig.active_ai_provider = provider;
         window.appConfig.deepseek_api_key = dsKey;
         window.appConfig.gemini_api_key = gemKey;
         window.appConfig.gemini_model = gemModel;
       }
-      
+
       callback(JSON.stringify(data));
     } catch (err) {
       callback(JSON.stringify({ success: false, error: err.message }));
     }
   },
 
-  chatWithDeepseek: async function(historyJson, message) {
+  chatWithDeepseek: async function (historyJson, message) {
     try {
       const history = JSON.parse(historyJson);
       const res = await fetch(`${API_BASE_URL}/api/ai/chat`, {
@@ -810,7 +878,7 @@ const mockBridge = {
     }
   },
 
-  runCopilotAction: async function(action, text) {
+  runCopilotAction: async function (action, text) {
     try {
       const res = await fetch(`${API_BASE_URL}/api/ai/copilot`, {
         method: "POST",
@@ -824,7 +892,7 @@ const mockBridge = {
     }
   },
 
-  generateMermaidDiagram: async function(prompt, selectedText, diagramType) {
+  generateMermaidDiagram: async function (prompt, selectedText, diagramType) {
     // Podemos canalizar esto al endpoint de copilot/chat o simular respuesta IA
     try {
       const completePrompt = `Genera un diagrama de tipo ${diagramType} en sintaxis de Mermaid basado en la siguiente instrucción: ${prompt}. Texto de referencia: ${selectedText}. Devuelve ÚNICAMENTE el código del diagrama de Mermaid envuelto en un bloque de código, sin explicaciones.`;
@@ -840,11 +908,11 @@ const mockBridge = {
     }
   },
 
-  openVisualizerWindow: function(path, name, type) {
+  openVisualizerWindow: function (path, name, type) {
     this.setStatus.emit(`Visualizador cargado en pestaña interna para: ${name}`);
   },
 
-  closeEditor: function() {
+  closeEditor: function () {
     this.closeEditorSignal.emit();
   }
 };
@@ -857,13 +925,13 @@ window.qt = {
 class QWebChannelMock {
   constructor(transport, callback) {
     console.log("Mock QWebChannel initialized.");
-    
+
     // Pre-cargar la configuración para que los slots síncronos funcionen
     fetch(`${API_BASE_URL}/api/config`)
       .then(res => res.json())
       .then(config => {
         window.appConfig = config;
-        
+
         // Ejecutar callback con el canal simulado
         const channel = {
           objects: {

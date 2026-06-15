@@ -9,6 +9,29 @@ const API_BASE_URL = window.location.hostname === "localhost" || window.location
   ? "http://localhost:8000"
   : "https://appweb-o7pl.onrender.com"; // En producción, si se aloja en el mismo servidor, se puede usar ruta relativa. Si no, poner URL de Render.
 
+// Intercept fetch calls to automatically attach authentication headers from localStorage
+const originalFetch = window.fetch;
+window.fetch = function (input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url) ? input.url : '';
+  if (url.startsWith(API_BASE_URL)) {
+    init = init || {};
+    let headers = init.headers || {};
+    
+    const token = localStorage.getItem("github_token");
+    if (token) {
+      if (headers instanceof Headers) {
+        headers.set("X-GitHub-Token", token);
+      } else if (Array.isArray(headers)) {
+        headers.push(["X-GitHub-Token", token]);
+      } else {
+        headers["X-GitHub-Token"] = token;
+      }
+    }
+    init.headers = headers;
+  }
+  return originalFetch(input, init);
+};
+
 class QtSignalMock {
   constructor(name) {
     this.name = name;
@@ -202,13 +225,22 @@ const mockBridge = {
   saveFile: async function (path, content) {
     try {
       this.showLoading.emit(true);
+
+      // Buscar metadatos correctos de la pestaña en openTabs para evitar cruces
+      let tabInfo = { source: "local", remote_id: null, remote_repo: null, sha: null };
+      const tabs = (typeof openTabs !== 'undefined') ? openTabs : [];
+      const tab = tabs.find(t => t.path === path);
+      if (tab && tab.info) {
+        tabInfo = tab.info;
+      }
+
       const payload = {
         path: path,
         content: content,
-        source: this._currentFileParams.source,
-        remote_id: this._currentFileParams.remote_id,
-        remote_repo: this._currentFileParams.remote_repo,
-        sha: this._currentFileParams.sha
+        source: tabInfo.source || this._currentFileParams.source,
+        remote_id: tabInfo.remote_id || this._currentFileParams.remote_id,
+        remote_repo: tabInfo.remote_repo || this._currentFileParams.remote_repo,
+        sha: tabInfo.sha || this._currentFileParams.sha
       };
 
       const res = await fetch(`${API_BASE_URL}/api/file/save`, {
@@ -222,6 +254,10 @@ const mockBridge = {
 
       if (data.sha) {
         this._currentFileParams.sha = data.sha;
+        // Actualizar el SHA en la pestaña activa para evitar conflictos 409
+        if (tab && tab.info) {
+          tab.info.sha = data.sha;
+        }
       }
       this.saveResult.emit(true);
       this.setStatus.emit("✅ Guardado con éxito.");
@@ -317,10 +353,7 @@ const mockBridge = {
   // --- GitHub Integrations ---
 
   getGithubToken: function () {
-    // Para simplificar, consultamos la sesión de config.json sincrónicamente o simulamos vacío
-    // Pero en JS, ui.js espera que retorne sincrónicamente.
-    // Como getGithubToken se llama sincrónicamente, podemos pre-cargar la configuración en window.config al iniciar
-    return (window.appConfig && window.appConfig.github_token) || "";
+    return localStorage.getItem("github_token") || (window.appConfig && window.appConfig.github_token) || "";
   },
 
   testGithubConnection: async function (token, callback) {
@@ -333,7 +366,8 @@ const mockBridge = {
       const data = await res.json();
       callback(JSON.stringify(data));
       if (data.success) {
-        // Guardar token en local config
+        // Guardar token en localStorage y window.appConfig
+        localStorage.setItem("github_token", token);
         if (window.appConfig) window.appConfig.github_token = token;
         await this.refreshTree();
       }
@@ -344,6 +378,7 @@ const mockBridge = {
 
   clearGithubToken: async function () {
     await fetch(`${API_BASE_URL}/api/sync/github/clear`, { method: "POST" });
+    localStorage.removeItem("github_token");
     if (window.appConfig) window.appConfig.github_token = "";
     this.setStatus.emit("Token de GitHub eliminado");
     await this.refreshTree();
@@ -595,8 +630,41 @@ const mockBridge = {
   },
 
   createCloudFile: async function (parentFolder, filename) {
-    // Equivalente para nubes
-    this.setStatus.emit("Operación no implementada para la nube directamente.");
+    try {
+      this.showLoading.emit(true);
+      this.setStatus.emit(`Creando archivo '${filename}' en la nube...`);
+      const res = await fetch(`${API_BASE_URL}/api/file/create-cloud`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ parent_folder: parentFolder, filename: filename })
+      });
+      
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.detail || `HTTP ${res.status}`);
+      }
+      
+      const data = await res.json();
+      if (data.success) {
+        this.setStatus.emit(`✅ Archivo creado en la nube: ${filename}`);
+        await this.refreshTree();
+        
+        // Auto-abrir el archivo creado
+        if (data.repo && data.full_path) {
+          // Es GitHub
+          await this.githubFileClicked(data.repo, data.full_path, filename);
+        } else if (data.remote_id) {
+          // Es Google Drive
+          await this.driveFileClicked(data.remote_id, filename);
+        }
+      } else {
+        throw new Error("Error desconocido");
+      }
+    } catch (err) {
+      this.setStatus.emit(`❌ Error creando archivo en la nube: ${err.message}`);
+    } finally {
+      this.showLoading.emit(false);
+    }
   },
 
   deleteItem: async function (path) {

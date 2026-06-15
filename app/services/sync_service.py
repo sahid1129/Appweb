@@ -461,6 +461,9 @@ class GitHubSyncService:
             return False, "Token vacío"
         token = token.strip()
 
+        if token == self._token and self.g is not None:
+            return True, ""
+
         try:
             shutil.rmtree(CACHE_DIR / "github", ignore_errors=True)
         except Exception:

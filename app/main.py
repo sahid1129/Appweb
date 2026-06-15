@@ -5,7 +5,7 @@ import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, status, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -34,6 +34,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def dynamic_auth_middleware(request: Request, call_next):
+    # Extract GitHub Token
+    token = request.headers.get("x-github-token")
+    if token:
+        github_sync.authenticate(token)
+    
+    # Extract Google Drive Token if present
+    drive_token = request.headers.get("x-drive-token")
+    if drive_token:
+        try:
+            import pickle
+            import base64
+            drive_sync._creds = pickle.loads(base64.b64decode(drive_token))
+            from googleapiclient.discovery import build
+            drive_sync.service = build("drive", "v3", credentials=drive_sync._creds)
+        except Exception:
+            pass
+            
+    response = await call_next(request)
+    return response
 
 # Inicializar servicios
 drive_sync = GoogleDriveSyncService()
@@ -292,9 +314,13 @@ def read_file(
         elif source == "github":
             if not remote_repo or not path:
                 raise HTTPException(status_code=400, detail="Faltan parámetros de repositorio/ruta para GitHub")
+            
+            if not github_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
+
             content = github_sync.download(remote_repo, path)
             if content is None:
-                raise HTTPException(status_code=500, detail="Error descargando archivo de GitHub")
+                raise HTTPException(status_code=404, detail="Archivo no encontrado en GitHub o error de descarga")
 
             # Guardamos caché local temporal
             safe_name = path.replace("/", "_")
@@ -316,6 +342,8 @@ def read_file(
         else:
             raise HTTPException(status_code=400, detail=f"Origen no soportado: {source}")
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -345,23 +373,29 @@ def save_file(payload: FileSavePayload):
                 return {"success": True, "remote_id": fid, "modifiedTime": mtime}
 
         elif payload.source == "github":
-            if not payload.remote_repo or not payload.path:
+            github_path = payload.remote_id or payload.path
+            if not payload.remote_repo or not github_path:
                 raise HTTPException(status_code=400, detail="Faltan repositorio o ruta para GitHub")
             
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path)
+            if not github_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
+
+            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path)
             if not sha:
                 raise HTTPException(status_code=404, detail="No se pudo obtener el SHA del archivo en GitHub para el commit")
 
-            ok = github_sync.commit(payload.remote_repo, payload.path, payload.content, sha, "Edit via Launchpad Web")
+            ok = github_sync.commit(payload.remote_repo, github_path, payload.content, sha, "Edit via Launchpad Web")
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al hacer commit en GitHub")
             
-            new_sha = github_sync.get_sha(payload.remote_repo, payload.path)
+            new_sha = github_sync.get_sha(payload.remote_repo, github_path)
             return {"success": True, "sha": new_sha}
 
         else:
             raise HTTPException(status_code=400, detail=f"Origen no soportado: {payload.source}")
 
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -462,6 +496,50 @@ def create_file_or_folder(payload: FileCreatePayload):
             return {"success": True, "path": new_path}
         else:
             raise HTTPException(status_code=400, detail="Tipo inválido. Debe ser 'file' o 'folder'")
+    except HTTPException as he:
+        raise he
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Crear Archivos en la Nube (GitHub o Google Drive)
+@app.post("/api/file/create-cloud")
+def create_cloud_file(payload: FileCreateCloudPayload):
+    try:
+        parsed = _parse_cloud_path(payload.parent_folder)
+        if not parsed:
+            raise HTTPException(status_code=400, detail="Destino en la nube inválido")
+        
+        service = parsed["service"]
+        default_content = payload.content or f"# {payload.filename.replace('.md', '').replace('_', ' ')}\n"
+        
+        if service == "github":
+            if not github_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
+            repo = parsed["repo"]
+            inner_path = parsed["path"]
+            full_path = f"{inner_path}/{payload.filename}" if inner_path else payload.filename
+            full_path = full_path.lstrip("/")
+            ok = github_sync.create_file(repo, full_path, default_content)
+            if not ok:
+                raise HTTPException(status_code=500, detail="Error creando archivo en GitHub")
+            
+            # Devolver repo y full_path para que el frontend pueda abrir el archivo de inmediato
+            return {"success": True, "path": f"github://dir/{repo}/{full_path}", "repo": repo, "full_path": full_path}
+            
+        elif service == "drive":
+            if not drive_sync.is_authenticated:
+                raise HTTPException(status_code=401, detail="No autenticado en Google Drive")
+            folder_id = parsed["folder_id"]
+            ok, fid, mtime = drive_sync.create_file(folder_id, payload.filename, default_content)
+            if not ok:
+                raise HTTPException(status_code=500, detail="Error creando archivo en Google Drive")
+            return {"success": True, "remote_id": fid, "path": f"drive://file/{fid}"}
+            
+        else:
+            raise HTTPException(status_code=400, detail="Servicio no soportado")
+            
+    except HTTPException as he:
+        raise he
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
