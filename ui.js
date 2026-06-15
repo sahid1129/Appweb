@@ -4848,10 +4848,13 @@ function checkAuthStatus() {
       var overlay = document.getElementById("login-overlay");
       if (!overlay) return;
       
+      var userInput = document.getElementById("login-username-input");
+      
       if (!data.password_set) {
         overlay.style.display = "flex";
-        document.getElementById("login-title").textContent = "Crear Contraseña Maestra";
-        document.getElementById("login-desc").textContent = "Crea una contraseña segura de al menos 6 caracteres para proteger tus notas.";
+        document.getElementById("login-title").textContent = "Crear Usuario y Contraseña";
+        document.getElementById("login-desc").textContent = "Define un nombre de usuario y una contraseña de al menos 6 caracteres para proteger tus notas.";
+        if (userInput) userInput.placeholder = "Crear usuario...";
         document.getElementById("login-confirm-password-input").style.display = "block";
         document.getElementById("login-remember-container").style.display = "none";
         document.getElementById("login-submit-btn").textContent = "Guardar y Entrar";
@@ -4886,7 +4889,9 @@ function showLoginOverlay() {
   if (!overlay) return;
   overlay.style.display = "flex";
   document.getElementById("login-title").textContent = "Iniciar Sesión";
-  document.getElementById("login-desc").textContent = "Ingresa la contraseña para acceder a tus notas.";
+  document.getElementById("login-desc").textContent = "Ingresa tu usuario y contraseña para acceder a tus notas.";
+  var userInput = document.getElementById("login-username-input");
+  if (userInput) userInput.placeholder = "Usuario...";
   document.getElementById("login-confirm-password-input").style.display = "none";
   document.getElementById("login-remember-container").style.display = "flex";
   document.getElementById("login-submit-btn").textContent = "Entrar";
@@ -4900,6 +4905,7 @@ function handleLoginKeydown(event) {
 }
 
 function submitAuth() {
+  var userInput = document.getElementById("login-username-input");
   var pwInput = document.getElementById("login-password-input");
   var confirmInput = document.getElementById("login-confirm-password-input");
   var rememberInput = document.getElementById("login-remember-me");
@@ -4908,7 +4914,17 @@ function submitAuth() {
   if (!pwInput || !errEl) return;
   errEl.textContent = "";
   
+  var username = userInput ? userInput.value.trim() : "";
   var password = pwInput.value;
+  
+  if (!username) {
+    errEl.textContent = "El usuario no puede estar vacío.";
+    return;
+  }
+  if (window._authMode === "setup" && username.length < 3) {
+    errEl.textContent = "El usuario debe tener al menos 3 caracteres.";
+    return;
+  }
   if (!password) {
     errEl.textContent = "La contraseña no puede estar vacía.";
     return;
@@ -4928,19 +4944,20 @@ function submitAuth() {
     fetch(API_BASE_URL + "/api/auth/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: password })
+      body: JSON.stringify({ username: username, password: password })
     })
     .then(r => r.json())
     .then(res => {
       if (res.success && res.token) {
         sessionStorage.setItem("app_session_token", res.token);
         document.getElementById("login-overlay").style.display = "none";
+        if (userInput) userInput.value = "";
         pwInput.value = "";
         if (confirmInput) confirmInput.value = "";
         initTheme();
         if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
       } else {
-        errEl.textContent = res.detail || "Error en el registro de contraseña.";
+        errEl.textContent = res.detail || "Error en el registro del usuario.";
       }
     })
     .catch(err => {
@@ -4951,11 +4968,12 @@ function submitAuth() {
     fetch(API_BASE_URL + "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: password })
+      body: JSON.stringify({ username: username, password: password })
     })
     .then(r => {
       if (r.status === 200) return r.json();
-      throw new Error("Contraseña incorrecta");
+      if (r.status === 401) throw new Error("Usuario o contraseña incorrectos");
+      throw new Error("Error de conexión");
     })
     .then(res => {
       if (res.success && res.token) {
@@ -4965,6 +4983,7 @@ function submitAuth() {
           sessionStorage.setItem("app_session_token", res.token);
         }
         document.getElementById("login-overlay").style.display = "none";
+        if (userInput) userInput.value = "";
         pwInput.value = "";
         initTheme();
         if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();

@@ -150,9 +150,11 @@ class Base64SavePayload(BaseModel):
     mimetype: Optional[str] = "image/png"
 
 class SetupPasswordPayload(BaseModel):
+    username: str
     password: str
 
 class LoginPayload(BaseModel):
+    username: str
     password: str
 
 class FileCreatePayload(BaseModel):
@@ -876,10 +878,15 @@ def auth_setup(payload: SetupPasswordPayload):
     if cfg.get("app_password_hash", ""):
         raise HTTPException(status_code=400, detail="El password ya está configurado")
         
+    username = payload.username.strip()
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="El usuario debe tener al menos 3 caracteres")
+        
     if len(payload.password) < 6:
         raise HTTPException(status_code=400, detail="El password debe tener al menos 6 caracteres")
         
     h = hash_password(payload.password)
+    cfg["app_username"] = username
     cfg["app_password_hash"] = h
     save_config(cfg)
     
@@ -891,15 +898,17 @@ def auth_setup(payload: SetupPasswordPayload):
 def auth_login(payload: LoginPayload):
     cfg = load_config()
     pw_hash = cfg.get("app_password_hash", "")
+    username_stored = cfg.get("app_username", "")
     if not pw_hash:
         raise HTTPException(status_code=400, detail="No hay password configurado. Realiza el setup primero.")
         
-    if verify_password(pw_hash, payload.password):
-        global _ACTIVE_SESSION_TOKEN
-        _ACTIVE_SESSION_TOKEN = secrets.token_hex(32)
-        return {"success": True, "token": _ACTIVE_SESSION_TOKEN}
-    else:
-        raise HTTPException(status_code=401, detail="Password incorrecto")
+    username_input = payload.username.strip().lower()
+    if username_input != username_stored.strip().lower() or not verify_password(pw_hash, payload.password):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+        
+    global _ACTIVE_SESSION_TOKEN
+    _ACTIVE_SESSION_TOKEN = secrets.token_hex(32)
+    return {"success": True, "token": _ACTIVE_SESSION_TOKEN}
 
 @app.post("/api/auth/logout")
 def auth_logout():

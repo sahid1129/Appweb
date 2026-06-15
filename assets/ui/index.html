@@ -617,7 +617,10 @@
     <div style="background: var(--bg-card, #1c2333); border: 1px solid var(--border, rgba(255, 255, 255, 0.08)); border-radius: 12px; padding: 32px; width: 100%; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); box-sizing: border-box; text-align: center; display: flex; flex-direction: column; gap: 16px; color: var(--text, #f3f4f6);">
       <div style="font-size: 48px; margin-bottom: 8px;">🔒</div>
       <h2 id="login-title" style="margin: 0; font-size: 20px; font-weight: 600;">Iniciar Sesión</h2>
-      <p id="login-desc" style="margin: 0; font-size: 13px; color: var(--text-muted, #9ca3af); line-height: 1.5;">Ingresa la contraseña para acceder a tus notas.</p>
+      <p id="login-desc" style="margin: 0; font-size: 13px; color: var(--text-muted, #9ca3af); line-height: 1.5;">Ingresa tu usuario y contraseña para acceder a tus notas.</p>
+      
+      <!-- Username Input -->
+      <input type="text" id="login-username-input" placeholder="Usuario..." style="width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
       
       <!-- Password Input -->
       <input type="password" id="login-password-input" placeholder="Contraseña..." style="width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
