@@ -4842,6 +4842,7 @@ function updateWordCount() {
 
 /* ========== AUTHENTICATION SYSTEM ========== */
 window._authMode = "login";
+window._configuredUsername = "";
 
 function checkAuthStatus() {
   fetch(API_BASE_URL + "/api/auth/status")
@@ -4851,17 +4852,24 @@ function checkAuthStatus() {
       if (!overlay) return;
       
       var userInput = document.getElementById("login-username-input");
+      var profileEl = document.getElementById("login-user-profile");
+      var profileUserEl = document.getElementById("login-profile-username");
       
       if (!data.password_set) {
         overlay.style.display = "flex";
         document.getElementById("login-title").textContent = "Crear Usuario y Contraseña";
         document.getElementById("login-desc").textContent = "Define un nombre de usuario y una contraseña de al menos 6 caracteres para proteger tus notas.";
-        if (userInput) userInput.placeholder = "Crear usuario...";
+        if (userInput) {
+          userInput.style.display = "block";
+          userInput.placeholder = "Crear usuario...";
+        }
+        if (profileEl) profileEl.style.display = "none";
         document.getElementById("login-confirm-password-input").style.display = "block";
         document.getElementById("login-remember-container").style.display = "none";
         document.getElementById("login-submit-btn").textContent = "Guardar y Entrar";
         window._authMode = "setup";
       } else {
+        window._configuredUsername = data.username || "";
         const sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
         if (sessionToken) {
           fetch(API_BASE_URL + "/api/auth/verify")
@@ -4891,9 +4899,24 @@ function showLoginOverlay() {
   if (!overlay) return;
   overlay.style.display = "flex";
   document.getElementById("login-title").textContent = "Iniciar Sesión";
-  document.getElementById("login-desc").textContent = "Ingresa tu usuario y contraseña para acceder a tus notas.";
+  document.getElementById("login-desc").textContent = "Ingresa la contraseña para acceder a tus notas.";
+  
   var userInput = document.getElementById("login-username-input");
-  if (userInput) userInput.placeholder = "Usuario...";
+  var profileEl = document.getElementById("login-user-profile");
+  var profileUserEl = document.getElementById("login-profile-username");
+  
+  if (profileEl && profileUserEl && window._configuredUsername) {
+    profileUserEl.textContent = window._configuredUsername;
+    profileEl.style.display = "flex";
+    if (userInput) userInput.style.display = "none";
+  } else {
+    if (profileEl) profileEl.style.display = "none";
+    if (userInput) {
+      userInput.style.display = "block";
+      userInput.placeholder = "Usuario...";
+    }
+  }
+  
   document.getElementById("login-confirm-password-input").style.display = "none";
   document.getElementById("login-remember-container").style.display = "flex";
   document.getElementById("login-submit-btn").textContent = "Entrar";
@@ -4916,7 +4939,13 @@ function submitAuth() {
   if (!pwInput || !errEl) return;
   errEl.textContent = "";
   
-  var username = userInput ? userInput.value.trim() : "";
+  var username = "";
+  if (window._authMode === "login" && window._configuredUsername) {
+    username = window._configuredUsername;
+  } else {
+    username = userInput ? userInput.value.trim() : "";
+  }
+  
   var password = pwInput.value;
   
   if (!username) {

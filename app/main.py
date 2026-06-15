@@ -886,7 +886,8 @@ def copilot_endpoint(payload: CopilotPayload):
 def auth_status():
     cfg = load_config()
     password_set = bool(cfg.get("app_password_hash", ""))
-    return {"success": True, "password_set": password_set}
+    username = cfg.get("app_username", "")
+    return {"success": True, "password_set": password_set, "username": username}
 
 @app.get("/api/auth/verify")
 def auth_verify(request: Request):

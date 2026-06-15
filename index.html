@@ -619,6 +619,12 @@
       <h2 id="login-title" style="margin: 0; font-size: 20px; font-weight: 600;">Iniciar Sesión</h2>
       <p id="login-desc" style="margin: 0; font-size: 13px; color: var(--text-muted, #9ca3af); line-height: 1.5;">Ingresa tu usuario y contraseña para acceder a tus notas.</p>
       
+      <!-- User Profile Badge (only shown during login) -->
+      <div id="login-user-profile" style="display: none; align-items: center; justify-content: center; gap: 10px; margin-bottom: 4px; background: rgba(255, 255, 255, 0.05); padding: 8px 16px; border-radius: 20px; border: 1px solid var(--border, rgba(255, 255, 255, 0.08));">
+        <span style="font-size: 16px;">👤</span>
+        <span id="login-profile-username" style="font-weight: 600; font-size: 14px; color: var(--accent, #6366f1);"></span>
+      </div>
+      
       <!-- Username Input -->
       <input type="text" id="login-username-input" placeholder="Usuario..." style="width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
       
