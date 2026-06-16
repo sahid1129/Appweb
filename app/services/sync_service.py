@@ -1,6 +1,7 @@
 # app/services/sync_service.py
 import json
 import pickle
+import threading
 import base64
 import time
 import os
@@ -139,9 +140,17 @@ def _cache_clear_repo(service: str, repo_id: str):
 # ========== Google Drive Service ==========
 class GoogleDriveSyncService:
     def __init__(self):
-        self.service = None
+        self._local = threading.local()
         self._creds = None
         self._load_token()
+
+    @property
+    def service(self):
+        return getattr(self._local, "service", None)
+
+    @service.setter
+    def service(self, value):
+        self._local.service = value
 
     def _load_token(self):
         try:
