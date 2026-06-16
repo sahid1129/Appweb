@@ -286,9 +286,7 @@
       document.getElementById("vis-image-container").style.display = "flex";
       var resolvedUrl = fileUrl;
       if (window.location.protocol !== "file:") {
-        const apiBaseUrl = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
-          ? "http://localhost:8000"
-          : (window.location.origin || "https://appweb-o7pl.onrender.com");
+        const apiBaseUrl = window.location.origin;
         const sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
         const tokenQuery = sessionToken ? "&token=" + encodeURIComponent(sessionToken) : "";
         resolvedUrl = apiBaseUrl + "/api/file/raw?path=" + encodeURIComponent(filePath) + "&source=local" + tokenQuery;

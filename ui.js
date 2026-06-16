@@ -916,6 +916,13 @@ function openEditorDirect(path, name, content, source) {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(autoSave, 3000);
 
+    // Mark current tab as uncommitted
+    var tab = openTabs.find(t => t.path === currentFilePath);
+    if (tab && !tab.uncommitted) {
+      tab.uncommitted = true;
+      renderTabsBar();
+    }
+
     // Record history snapshot and update word count
     recordHistorySnapshotDebounced();
     updateWordCount();
@@ -1910,6 +1917,7 @@ document.addEventListener("keydown", function(e) {
   if ((e.ctrlKey || e.metaKey) && e.key === "o") { e.preventDefault(); var ep = getExplorerPath(); if (ep) bridge.openInExplorer(ep); }
   if ((e.ctrlKey || e.metaKey) && e.key === "r") { e.preventDefault(); bridge.refreshTree(); }
   if ((e.ctrlKey || e.metaKey) && e.key === "b") { e.preventDefault(); toggleSidebar(); }
+  if (e.key === "Escape" && window.pendingMoveSource) { e.preventDefault(); resetMoveState(); showStatus("Movimiento cancelado"); }
 });
 
 /* ========== New File & Rename Handlers ========== */
@@ -1980,23 +1988,75 @@ function renameSelectedItem() {
 
 function moveSelectedItem() {
   if (!bridge) return;
-  if (!selectedNode) {
-    showStatus("Selecciona un archivo o carpeta para mover");
-    return;
+  
+  var moveBtn = document.getElementById("btn-move-item");
+  
+  // Si no tenemos un origen seleccionado, cortamos el elemento actual
+  if (!window.pendingMoveSource) {
+    if (!selectedNode) {
+      showStatus("Selecciona un archivo o carpeta para mover");
+      return;
+    }
+    
+    var t = selectedNode._type || "";
+    var isCloud = (t.startsWith("github") || t.startsWith("drive") || t === "dir" || t === "drive_folder");
+    if (isCloud) {
+      showStatus("Mover archivos en la nube no está soportado");
+      return;
+    }
+    
+    window.pendingMoveSource = selectedPath;
+    window.pendingMoveSourceName = selectedNode.name.replace(/^[^\s]+\s/, '');
+    
+    if (moveBtn) {
+      moveBtn.innerHTML = "<span>📋</span><span>Pegar</span>";
+      moveBtn.title = "Pegar elemento cortado en el destino seleccionado (o presiona Esc para cancelar)";
+    }
+    showStatus("Cortado: '" + window.pendingMoveSourceName + "'. Selecciona el destino y haz clic en Pegar.");
+  } else {
+    // Si ya tenemos origen, la selección actual es la carpeta de destino
+    var targetFolder = "";
+    if (selectedNode) {
+      var t = selectedNode._type || "";
+      // Si el destino es carpeta o directorio, lo usamos
+      if (t === "folder" || t === "drive_folder" || t === "dir") {
+        targetFolder = selectedPath;
+      } else {
+        // Si es un archivo, obtenemos su carpeta contenedora (directorio padre)
+        var sep = selectedPath.includes('/') ? '/' : '\\';
+        targetFolder = selectedPath.substring(0, selectedPath.lastIndexOf(sep));
+      }
+    } else {
+      // Si no hay nada seleccionado, usamos la raíz activa
+      targetFolder = getExplorerPath();
+    }
+    
+    if (!targetFolder) {
+      showStatus("No se pudo determinar la carpeta de destino.");
+      return;
+    }
+    
+    // Validar que el origen y destino no sean el mismo o descendientes
+    var sep = targetFolder.includes('/') ? '/' : '\\';
+    if (window.pendingMoveSource === targetFolder || targetFolder.startsWith(window.pendingMoveSource + sep)) {
+      showStatus("Movimiento cancelado (destino inválido o idéntico)");
+      resetMoveState();
+      return;
+    }
+    
+    bridge.moveItem(window.pendingMoveSource, targetFolder);
+    resetMoveState();
   }
-  
-  var t = selectedNode._type || "";
-  var isCloud = (t.startsWith("github") || t.startsWith("drive") || t === "dir" || t === "drive_folder");
-  
-  if (isCloud) {
-    showStatus("Mover archivos en la nube no está implementado de forma directa.");
-    return;
+}
+
+function resetMoveState() {
+  window.pendingMoveSource = null;
+  window.pendingMoveSourceName = null;
+  var moveBtn = document.getElementById("btn-move-item");
+  if (moveBtn) {
+    moveBtn.innerHTML = "<span>📂</span><span>Mover</span>";
+    moveBtn.title = "Mover elemento seleccionado";
   }
-  
-  var newPathStr = prompt("Introduce la ruta absoluta o relativa de destino para este elemento:", selectedPath);
-  if (!newPathStr || newPathStr === selectedPath) return;
-  
-  bridge.moveItem(selectedPath, newPathStr);
 }
 
 /* ========== Custom Markdown Editor Enhancements ========== */
@@ -2529,9 +2589,9 @@ const mermaidTemplates = [
         Lanzamiento Beta : Correcciones : Lanzamiento Oficial`
   },
   {
-    id: 'zenuml',
-    name: 'ZenUML',
-    desc: 'Diagramas de secuencia centrados en la lógica',
+    id: 'sequence',
+    name: 'Diagrama de Secuencia',
+    desc: 'Visualización de interacción y flujo de mensajes entre objetos',
     icon: '⚡',
     code: `sequenceDiagram
     title Flujo de Autenticación
@@ -2703,6 +2763,7 @@ function openMermaidModal() {
       cleanText.startsWith("gantt") ||
       cleanText.startsWith("timeline") ||
       cleanText.startsWith("pie") ||
+      cleanText.startsWith("sequence") ||
       cleanText.startsWith("zenuml") ||
       cleanText.startsWith("architecture-beta");
       
@@ -3128,6 +3189,13 @@ function triggerModalDelayedRender() {
 // Hook up modal events
 document.addEventListener('DOMContentLoaded', function() {
   checkAuthStatus();
+
+  // Collapse sidebar by default on mobile
+  if (window.innerWidth <= 768) {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar) sidebar.classList.add("collapsed");
+  }
+
   var btnInsert = document.getElementById('btn-modal-insert');
   var btnCancel = document.getElementById('btn-modal-cancel');
   var codeEditor = document.getElementById('modal-code-editor');
@@ -4134,6 +4202,25 @@ function saveActiveTabState() {
 }
 
 function setActiveTab(path) {
+  if (activeTabPath && activeTabPath !== path) {
+    const oldTab = openTabs.find(t => t.path === activeTabPath);
+    if (oldTab && oldTab.type === "markdown" && editorDirty && editorInstance) {
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+      var content = editorInstance.getMarkdown();
+      bridge.saveFile(oldTab.path, content);
+      editorDirty = false;
+    }
+  }
+
+  // On mobile screens, collapse the sidebar automatically when selecting a tab/file
+  if (window.innerWidth <= 768) {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar) sidebar.classList.add("collapsed");
+  }
+
   saveActiveTabState();
   
   activeTabPath = path;
@@ -4681,6 +4768,7 @@ function checkAuthStatus() {
               if (r.status === 200) {
                 overlay.style.display = "none";
                 initTheme();
+                syncConfigFromServer();
               } else {
                 showLoginOverlay();
               }
@@ -4767,8 +4855,12 @@ function submitAuth() {
   
   if (window._authMode === "setup") {
     var confirmPw = confirmInput ? confirmInput.value : "";
-    if (password.length < 6) {
-      errEl.textContent = "La contraseña debe tener al menos 6 caracteres.";
+    if (password.length < 8) {
+      errEl.textContent = "La contraseña debe tener al menos 8 caracteres.";
+      return;
+    }
+    if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
+      errEl.textContent = "La contraseña debe contener mayúsculas, minúsculas y números.";
       return;
     }
     if (password !== confirmPw) {
@@ -4781,7 +4873,12 @@ function submitAuth() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username: username, password: password })
     })
-    .then(r => r.json())
+    .then(r => {
+      if (r.status === 200) return r.json();
+      return r.json().then(errData => {
+        throw new Error(errData.detail || "Error en el registro del usuario.");
+      });
+    })
     .then(res => {
       if (res.success && res.token) {
         sessionStorage.setItem("app_session_token", res.token);
@@ -4790,25 +4887,31 @@ function submitAuth() {
         pwInput.value = "";
         if (confirmInput) confirmInput.value = "";
         initTheme();
+        syncConfigFromServer();
         if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
       } else {
-        errEl.textContent = res.detail || "Error en el registro del usuario.";
+        errEl.textContent = "Error en el registro del usuario.";
       }
     })
     .catch(err => {
-      errEl.textContent = "Error de conexión: " + err.message;
+      errEl.textContent = err.message;
     });
     
   } else {
     fetch(API_BASE_URL + "/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: username, password: password })
+      body: JSON.stringify({ 
+        username: username, 
+        password: password,
+        remember_me: rememberInput ? rememberInput.checked : false
+      })
     })
     .then(r => {
       if (r.status === 200) return r.json();
-      if (r.status === 401) throw new Error("Usuario o contraseña incorrectos");
-      throw new Error("Error de conexión");
+      return r.json().then(errData => {
+        throw new Error(errData.detail || "Error al iniciar sesión");
+      });
     })
     .then(res => {
       if (res.success && res.token) {
@@ -4821,6 +4924,7 @@ function submitAuth() {
         if (userInput) userInput.value = "";
         pwInput.value = "";
         initTheme();
+        syncConfigFromServer();
         if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
       } else {
         errEl.textContent = "Error al iniciar sesión.";
@@ -4832,11 +4936,49 @@ function submitAuth() {
   }
 }
 
+function syncConfigFromServer() {
+  fetch(API_BASE_URL + "/api/config")
+    .then(r => {
+      if (r.ok) return r.json();
+      throw new Error("Error obteniendo configuración");
+    })
+    .then(cfg => {
+      if (cfg) {
+        if (cfg.github_token) localStorage.setItem("github_token", cfg.github_token);
+        if (cfg.deepseek_api_key) localStorage.setItem("deepseek_api_key", cfg.deepseek_api_key);
+        if (cfg.gemini_api_key) localStorage.setItem("gemini_api_key", cfg.gemini_api_key);
+        if (cfg.gemini_model) localStorage.setItem("gemini_model", cfg.gemini_model);
+        if (cfg.active_ai_provider) localStorage.setItem("active_ai_provider", cfg.active_ai_provider);
+        
+        if (window.appConfig) {
+          window.appConfig.github_token = cfg.github_token || window.appConfig.github_token || "";
+          window.appConfig.deepseek_api_key = cfg.deepseek_api_key || window.appConfig.deepseek_api_key || "";
+          window.appConfig.gemini_api_key = cfg.gemini_api_key || window.appConfig.gemini_api_key || "";
+          window.appConfig.gemini_model = cfg.gemini_model || window.appConfig.gemini_model || "";
+          window.appConfig.active_ai_provider = cfg.active_ai_provider || window.appConfig.active_ai_provider || "";
+        }
+      }
+    })
+    .catch(err => console.error("Error sincronizando config desde el servidor:", err));
+}
+
 function logout() {
   fetch(API_BASE_URL + "/api/auth/logout", { method: "POST" })
     .finally(() => {
       sessionStorage.removeItem("app_session_token");
       localStorage.removeItem("app_session_token");
+      localStorage.removeItem("github_token");
+      localStorage.removeItem("deepseek_api_key");
+      localStorage.removeItem("gemini_api_key");
+      localStorage.removeItem("gemini_model");
+      localStorage.removeItem("active_ai_provider");
+      if (window.appConfig) {
+        window.appConfig.github_token = "";
+        window.appConfig.deepseek_api_key = "";
+        window.appConfig.gemini_api_key = "";
+        window.appConfig.gemini_model = "";
+        window.appConfig.active_ai_provider = "";
+      }
       showLoginOverlay();
     });
 }

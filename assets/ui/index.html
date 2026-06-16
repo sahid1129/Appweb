@@ -4,15 +4,20 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Launchpad</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cdefs%3E%3ClinearGradient id='gradient' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23818cf8'/%3E%3Cstop offset='100%25' stop-color='%234f46e5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='128' height='128' rx='32' fill='url(%23gradient)'/%3E%3Cpath d='M40,30 L88,30 M40,50 L88,50 M40,70 L70,70' stroke='white' stroke-width='8' stroke-linecap='round' opacity='0.4'/%3E%3Cpath d='M75,100 L95,80 L85,60 Z' fill='%2338bdf8'/%3E%3Cpath d='M95,80 L105,70 C110,65 110,55 105,50 C100,45 90,45 85,50 L75,60' stroke='%2338bdf8' stroke-width='8' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Ccircle cx='92' cy='36' r='12' fill='%23fbbf24'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="assets/editor/lib/toastui-editor.css">
   <link rel="stylesheet" href="assets/editor/lib/github.min.css">
-  <link rel="stylesheet" href="ui.css">
+  <link rel="stylesheet" href="ui.css?v=2">
 </head>
 <body>
   <div id="app">
     <!-- Toolbar -->
     <div id="toolbar">
       <button onclick="toggleSidebar()" title="Mostrar/ocultar árbol (Ctrl+B)" class="toggle-sidebar">☰</button>
+      <div class="brand-container" style="display: flex; align-items: center; gap: 8px; margin-left: 6px; margin-right: 6px; padding: 0 4px; user-select: none;">
+        <span style="font-size: 18px; line-height: 1;">🚀</span>
+        <span style="font-weight: 700; font-size: 13.5px; background: linear-gradient(135deg, #a5b4fc, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-family: 'Outfit', sans-serif; letter-spacing: -0.2px;">Launchpad</span>
+      </div>
       <div class="sep"></div>
       <button onclick="bridge.navBack()" title="Atrás">◀</button>
       <button onclick="bridge.navForward()" title="Adelante">▶</button>
@@ -24,6 +29,7 @@
       <div class="sep"></div>
       <button onclick="showSettingsDialog()" title="Ajustes y Conexiones"><span>⚙️</span><span class="btn-label">Ajustes</span></button>
       <button onclick="toggleTheme()" id="btn-theme-toggle" title="Cambiar Tema (Oscuro/Claro)"><span>🌙</span><span class="btn-label">Tema</span></button>
+      <button onclick="logout()" title="Cerrar Sesión"><span>🚪</span><span class="btn-label">Salir</span></button>
     </div>
 
     <!-- Main -->
@@ -43,7 +49,7 @@
             <div class="sidebar-actions">
               <button onclick="createNewMdFile()" title="Crear nuevo archivo .md"><span>➕</span><span>Nuevo</span></button>
               <button onclick="renameSelectedItem()" title="Renombrar elemento seleccionado"><span>✏️</span><span>Renombrar</span></button>
-              <button onclick="moveSelectedItem()" title="Mover elemento seleccionado"><span>📂</span><span>Mover</span></button>
+              <button id="btn-move-item" onclick="moveSelectedItem()" title="Mover elemento seleccionado"><span>📂</span><span>Mover</span></button>
               <button onclick="deleteSelectedItem()" title="Eliminar elemento seleccionado"><span>🗑️</span><span>Eliminar</span></button>
               <button onclick="toggleSidebar()" title="Minimizar árbol">◀</button>
             </div>
@@ -620,11 +626,11 @@
   <script src="ui.js"></script>
   
   <!-- Login Overlay -->
-  <div id="login-overlay" style="display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(8, 11, 17, 0.85); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 9999999; align-items: center; justify-content: center; font-family: 'Outfit', sans-serif;">
-    <div style="background: var(--bg-card, #1c2333); border: 1px solid var(--border, rgba(255, 255, 255, 0.08)); border-radius: 12px; padding: 32px; width: 100%; max-width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); box-sizing: border-box; text-align: center; display: flex; flex-direction: column; gap: 16px; color: var(--text, #f3f4f6);">
-      <div style="font-size: 48px; margin-bottom: 8px;">🔒</div>
-      <h2 id="login-title" style="margin: 0; font-size: 20px; font-weight: 600;">Iniciar Sesión</h2>
-      <p id="login-desc" style="margin: 0; font-size: 13px; color: var(--text-muted, #9ca3af); line-height: 1.5;">Ingresa tu usuario y contraseña para acceder a tus notas.</p>
+  <div id="login-overlay">
+    <div class="login-box">
+      <div class="lock-icon">🔒</div>
+      <h2 id="login-title">Iniciar Sesión</h2>
+      <p id="login-desc">Ingresa tu usuario y contraseña para acceder a tus notas.</p>
       
       <!-- User Profile Badge (only shown during login) -->
       <div id="login-user-profile" style="display: none; align-items: center; justify-content: center; gap: 10px; margin-bottom: 4px; background: rgba(255, 255, 255, 0.05); padding: 8px 16px; border-radius: 20px; border: 1px solid var(--border, rgba(255, 255, 255, 0.08));">
@@ -633,24 +639,24 @@
       </div>
       
       <!-- Username Input -->
-      <input type="text" id="login-username-input" placeholder="Usuario..." style="width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
+      <input type="text" id="login-username-input" placeholder="Usuario..." onkeydown="handleLoginKeydown(event)" />
       
       <!-- Password Input -->
-      <input type="password" id="login-password-input" placeholder="Contraseña..." style="width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
+      <input type="password" id="login-password-input" placeholder="Contraseña..." onkeydown="handleLoginKeydown(event)" />
       
       <!-- Confirm Password (only for setup) -->
-      <input type="password" id="login-confirm-password-input" placeholder="Confirmar contraseña..." style="display: none; width: 100%; padding: 10px 14px; border: 1px solid var(--border, rgba(255,255,255,0.08)); border-radius: 8px; background: rgba(0, 0, 0, 0.2); color: white; font-size: 14px; outline: none; box-sizing: border-box;" onkeydown="handleLoginKeydown(event)" />
+      <input type="password" id="login-confirm-password-input" placeholder="Confirmar contraseña..." style="display: none;" onkeydown="handleLoginKeydown(event)" />
       
       <!-- Remember Me Checkbox -->
-      <div id="login-remember-container" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-muted, #9ca3af); margin-top: 4px; user-select: none;">
-        <input type="checkbox" id="login-remember-me" style="cursor: pointer;" />
-        <label for="login-remember-me" style="cursor: pointer;">Mantener sesión iniciada</label>
+      <div id="login-remember-container" class="checkbox-container">
+        <input type="checkbox" id="login-remember-me" />
+        <label for="login-remember-me">Mantener sesión iniciada</label>
       </div>
 
       <!-- Submit Button -->
-      <button id="login-submit-btn" onclick="submitAuth()" style="width: 100%; padding: 10px; border: none; border-radius: 8px; background: var(--accent, #6366f1); color: white; font-size: 14px; font-weight: 600; cursor: pointer; transition: background 0.15s ease;">Entrar</button>
+      <button id="login-submit-btn" onclick="submitAuth()">Entrar</button>
       
-      <div id="login-error" style="color: #ef4444; font-size: 12px; font-weight: 500; min-height: 16px; margin-top: 4px;"></div>
+      <div id="login-error" class="error-msg"></div>
     </div>
   </div>
 </body>

@@ -34,6 +34,17 @@ def load_config() -> dict:
             cfg = json.loads(CONFIG_PATH.read_text("utf-8"))
         except Exception:
             pass
+    # Environment variables take precedence over config.json for easy cloud deployment (Render/Docker)
+    import os
+    for key, env_var in [
+        ("github_token", "GITHUB_TOKEN"),
+        ("deepseek_api_key", "DEEPSEEK_API_KEY"),
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("gemini_model", "GEMINI_MODEL"),
+        ("active_ai_provider", "ACTIVE_AI_PROVIDER")
+    ]:
+        if os.environ.get(env_var):
+            cfg[key] = os.environ.get(env_var).strip()
     cfg.update(_MEMORY_CONFIG)
     return cfg
 
@@ -173,17 +184,30 @@ class GoogleDriveSyncService:
                 return True
 
             if self._creds and self._creds.expired and self._creds.refresh_token:
-                self._creds.refresh(Request())
-            else:
+                try:
+                    self._creds.refresh(Request())
+                except Exception as refresh_err:
+                    logger.warning(f"Error al refrescar token de Google Drive, re-autenticando: {refresh_err}")
+                    self._creds = None
+
+            if not self._creds or not self._creds.valid:
                 if not CREDS_PATH.exists():
-                    raise FileNotFoundError(f"No se encuentra el archivo de credenciales de Google en {CREDS_PATH}")
-                # Nota: En un entorno web real de producción se usa OAuth2 web flow, 
-                # pero para desarrollo local podemos usar el flow local.
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(CREDS_PATH),
-                    ["https://www.googleapis.com/auth/drive"]
-                )
-                self._creds = flow.run_local_server(port=0, open_browser=True)
+                    raise FileNotFoundError("No se encuentra el archivo credentials.json de Google Drive. Por favor, súbelo en los Ajustes.")
+                
+                try:
+                    import os
+                    # Si corre en Render, Docker, Heroku o tiene PORT seteado, asumimos entorno web headless y evitamos abrir navegador
+                    if os.environ.get("PORT") or os.environ.get("RENDER") or os.environ.get("DEBIAN_FRONTEND") == "noninteractive":
+                        raise RuntimeError("Google Drive no autenticado. Por favor, vincule su cuenta en la sección de Ajustes.")
+                    
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        str(CREDS_PATH),
+                        ["https://www.googleapis.com/auth/drive"]
+                    )
+                    self._creds = flow.run_local_server(port=0, open_browser=True)
+                except Exception as auth_err:
+                    logger.error(f"Error al iniciar InstalledAppFlow: {auth_err}")
+                    raise RuntimeError("Google Drive no autenticado. Por favor, inicie sesión desde el menú de Ajustes en la aplicación.")
 
             self.service = build("drive", "v3", credentials=self._creds)
             self._save_token()

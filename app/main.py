@@ -40,22 +40,80 @@ import secrets
 from fastapi.responses import JSONResponse
 
 # Helper functions for multi-worker session token persistence
-SESSION_TOKEN_PATH = Path(__file__).resolve().parent.parent / ".session_token"
+import json
+from datetime import timedelta
 
-def get_active_session_token() -> Optional[str]:
-    if SESSION_TOKEN_PATH.exists():
+SESSIONS_JSON_PATH = Path(__file__).resolve().parent.parent / ".session_tokens.json"
+FAILED_LOGINS_PATH = Path(__file__).resolve().parent.parent / ".failed_logins.json"
+
+def load_sessions() -> dict:
+    if SESSIONS_JSON_PATH.exists():
         try:
-            return SESSION_TOKEN_PATH.read_text("utf-8").strip()
+            with open(SESSIONS_JSON_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "tokens" in data:
+                    return data["tokens"]
         except Exception:
             pass
-    return None
+    return {}
 
-def set_active_session_token(token: str):
+def save_sessions(sessions: dict):
     try:
-        SESSION_TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SESSION_TOKEN_PATH.write_text(token, "utf-8")
+        SESSIONS_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(SESSIONS_JSON_PATH, "w", encoding="utf-8") as f:
+            json.dump({"tokens": sessions}, f, indent=2)
     except Exception:
         pass
+
+def add_session(token: str, username: str, expires_in_seconds: int = 86400):
+    sessions = load_sessions()
+    now = datetime.utcnow()
+    # Clean expired sessions dynamically
+    sessions = {k: v for k, v in sessions.items() if datetime.fromisoformat(v["expires_at"]) > now}
+    
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    expires_at = (now + timedelta(seconds=expires_in_seconds)).isoformat()
+    
+    sessions[token_hash] = {
+        "username": username,
+        "created_at": now.isoformat(),
+        "expires_at": expires_at
+    }
+    save_sessions(sessions)
+
+def verify_session_token(token: str) -> bool:
+    if not token:
+        return False
+    sessions = load_sessions()
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    
+    session = sessions.get(token_hash)
+    if not session:
+        return False
+        
+    expires_at_str = session.get("expires_at")
+    if not expires_at_str:
+        return False
+        
+    try:
+        expires_at = datetime.fromisoformat(expires_at_str)
+        if datetime.utcnow() > expires_at:
+            # Remove expired session
+            del sessions[token_hash]
+            save_sessions(sessions)
+            return False
+        return True
+    except Exception:
+        return False
+
+def remove_session_token(token: str):
+    if not token:
+        return
+    sessions = load_sessions()
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    if token_hash in sessions:
+        del sessions[token_hash]
+        save_sessions(sessions)
 
 def hash_password(password: str, salt: bytes = None) -> str:
     if salt is None:
@@ -72,6 +130,87 @@ def verify_password(stored_hash_str: str, password: str) -> bool:
         return pwd_hash == new_hash
     except Exception:
         return False
+
+# Lockout Rate Limiting Helpers
+def load_failed_logins() -> dict:
+    if FAILED_LOGINS_PATH.exists():
+        try:
+            with open(FAILED_LOGINS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception:
+            pass
+    return {}
+
+def save_failed_logins(data: dict):
+    try:
+        FAILED_LOGINS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(FAILED_LOGINS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+def check_lockout(ip: str, username: str) -> tuple:
+    """Returns (is_blocked, remaining_seconds)"""
+    data = load_failed_logins()
+    now = datetime.utcnow().timestamp()
+    
+    # Check IP block
+    ip_entry = data.get(f"ip:{ip}")
+    if ip_entry and ip_entry.get("blocked_until", 0) > now:
+        return True, int(ip_entry["blocked_until"] - now)
+        
+    # Check username block
+    user_entry = data.get(f"user:{username.strip().lower()}")
+    if user_entry and user_entry.get("blocked_until", 0) > now:
+        return True, int(user_entry["blocked_until"] - now)
+        
+    return False, 0
+
+def record_failed_login(ip: str, username: str):
+    data = load_failed_logins()
+    now = datetime.utcnow().timestamp()
+    
+    for key in [f"ip:{ip}", f"user:{username.strip().lower()}"]:
+        entry = data.get(key, {"attempts": 0, "last_attempt": 0, "blocked_until": 0})
+        
+        # Reset attempts if blocked_until was set but expired
+        if entry.get("blocked_until", 0) < now and entry.get("blocked_until", 0) > 0:
+            entry["attempts"] = 0
+            entry["blocked_until"] = 0
+            
+        entry["attempts"] += 1
+        entry["last_attempt"] = now
+        
+        if entry["attempts"] >= 5:
+            entry["blocked_until"] = now + 900 # Block for 15 minutes
+            
+        data[key] = entry
+        
+    save_failed_logins(data)
+
+def reset_failed_logins(ip: str, username: str):
+    data = load_failed_logins()
+    changed = False
+    for key in [f"ip:{ip}", f"user:{username.strip().lower()}"]:
+        if key in data:
+            del data[key]
+            changed = True
+    if changed:
+        save_failed_logins(data)
+
+def validate_password_strength(password: str) -> str:
+    """Validate strength (min 8 chars, mixed case, digit). Returns error msg or empty string."""
+    if len(password) < 8:
+        return "La contraseña debe tener al menos 8 caracteres."
+    if not re.search(r"[a-z]", password):
+        return "La contraseña debe contener al menos una letra minúscula."
+    if not re.search(r"[A-Z]", password):
+        return "La contraseña debe contener al menos una letra mayúscula."
+    if not re.search(r"\d", password):
+        return "La contraseña debe contener al menos un número."
+    return ""
 
 @app.middleware("http")
 async def dynamic_auth_middleware(request: Request, call_next):
@@ -94,8 +233,7 @@ async def dynamic_auth_middleware(request: Request, call_next):
     if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/sync/drive/callback"):
         if pw_hash:
             session_token = request.headers.get("x-session-token") or request.query_params.get("token")
-            active_token = get_active_session_token()
-            if not session_token or session_token != active_token:
+            if not session_token or not verify_session_token(session_token):
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing session token"})
                 
     # Extract GitHub Token
@@ -179,6 +317,7 @@ class SetupPasswordPayload(BaseModel):
 class LoginPayload(BaseModel):
     username: str
     password: str
+    remember_me: Optional[bool] = False
 
 class FileCreatePayload(BaseModel):
     parent_folder: str
@@ -1011,15 +1150,13 @@ def auth_status():
 @app.get("/api/auth/verify")
 def auth_verify(request: Request):
     token = request.headers.get("x-session-token")
-    active_token = get_active_session_token()
-    if token and token == active_token:
+    if token and verify_session_token(token):
         return {"success": True}
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 @app.post("/api/auth/setup")
 def auth_setup(payload: SetupPasswordPayload):
     cfg = load_config()
-    # Check if password is set in env or config
     pw_hash = os.environ.get("APP_PASSWORD_HASH") or os.environ.get("APP_PASSWORD") or cfg.get("app_password_hash", "")
     if pw_hash:
         raise HTTPException(status_code=400, detail="El password ya está configurado")
@@ -1028,8 +1165,9 @@ def auth_setup(payload: SetupPasswordPayload):
     if len(username) < 3:
         raise HTTPException(status_code=400, detail="El usuario debe tener al menos 3 caracteres")
         
-    if len(payload.password) < 6:
-        raise HTTPException(status_code=400, detail="El password debe tener al menos 6 caracteres")
+    password_error = validate_password_strength(payload.password)
+    if password_error:
+        raise HTTPException(status_code=400, detail=password_error)
         
     h = hash_password(payload.password)
     cfg["app_username"] = username
@@ -1037,13 +1175,22 @@ def auth_setup(payload: SetupPasswordPayload):
     save_config(cfg)
     
     token = secrets.token_hex(32)
-    set_active_session_token(token)
+    add_session(token, username, expires_in_seconds=86400)
     return {"success": True, "token": token}
 
 @app.post("/api/auth/login")
-def auth_login(payload: LoginPayload):
-    cfg = load_config()
+def auth_login(payload: LoginPayload, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    username = payload.username.strip()
     
+    is_blocked, remaining = check_lockout(client_ip, username)
+    if is_blocked:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Demasiados intentos fallidos. Bloqueado temporalmente por {remaining} segundos."
+        )
+        
+    cfg = load_config()
     username_stored = os.environ.get("APP_USERNAME") or cfg.get("app_username", "")
     pw_hash = os.environ.get("APP_PASSWORD_HASH")
     if not pw_hash:
@@ -1056,19 +1203,21 @@ def auth_login(payload: LoginPayload):
     if not pw_hash:
         raise HTTPException(status_code=400, detail="No hay password configurado. Realiza el setup primero.")
         
-    username_input = payload.username.strip().lower()
+    username_input = username.lower()
     if username_input != username_stored.strip().lower() or not verify_password(pw_hash, payload.password):
+        record_failed_login(client_ip, username)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
         
+    reset_failed_logins(client_ip, username)
+    
+    expires_in = 30 * 24 * 3600 if payload.remember_me else 24 * 3600
     token = secrets.token_hex(32)
-    set_active_session_token(token)
+    add_session(token, username_stored, expires_in_seconds=expires_in)
     return {"success": True, "token": token}
 
 @app.post("/api/auth/logout")
-def auth_logout():
-    if SESSION_TOKEN_PATH.exists():
-        try:
-            SESSION_TOKEN_PATH.unlink()
-        except Exception:
-            pass
+def auth_logout(request: Request):
+    token = request.headers.get("x-session-token")
+    if token:
+        remove_session_token(token)
     return {"success": True}

@@ -5,9 +5,9 @@
  */
 
 // Define global base URL for the API
-const API_BASE_URL = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.protocol === "file:"
+const API_BASE_URL = window.location.protocol === "file:"
   ? "http://localhost:8000"
-  : "https://appweb-o7pl.onrender.com"; // En producción, si se aloja en el mismo servidor, se puede usar ruta relativa. Si no, poner URL de Render.
+  : window.location.origin;
 
 // Intercept fetch calls to automatically attach authentication & AI headers from localStorage
 const originalFetch = window.fetch;
@@ -657,9 +657,12 @@ const mockBridge = {
   fetchDriveFolders: async function () {
     try {
       const res = await fetch(`${API_BASE_URL}/api/sync/drive/folders`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const folders = await res.json();
+      if (!Array.isArray(folders)) throw new Error("Respuesta inválida del servidor");
       this.driveFoldersLoaded.emit(JSON.stringify(folders));
     } catch (err) {
+      console.error(err);
       this.driveFoldersLoaded.emit(JSON.stringify([]));
     }
   },
@@ -680,6 +683,10 @@ const mockBridge = {
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/sync/drive/files?folder_id=${encodeURIComponent(remoteId)}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || `HTTP ${res.status}`);
+      }
       const data = await res.json();
 
       // Simulamos la emisión del showFolderInfo similar a _send_drive_subtree en Python
@@ -702,6 +709,8 @@ const mockBridge = {
           files: filesItems,
           path: path
         }));
+      } else {
+        throw new Error(data.error || "Error desconocido al listar archivos.");
       }
     } catch (err) {
       this.setStatus.emit(`❌ Error listando Drive: ${err.message}`);
@@ -753,20 +762,30 @@ const mockBridge = {
   // --- File manipulations ---
 
   createNewFile: async function (parentFolder) {
-    const filename = prompt("Nombre del nuevo archivo (ej: nota.md):", "nota.md");
+    const filename = prompt("Nombre del nuevo elemento (agrega '/' al final para crear una carpeta):", "nota_nueva.md");
     if (!filename) return;
+    
+    let type = "file";
+    let cleanName = filename;
+    if (filename.endsWith("/")) {
+      type = "folder";
+      cleanName = filename.slice(0, -1);
+    }
+    
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/file/create`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ parent_folder: parentFolder, name: filename, type: "file" })
+        body: JSON.stringify({ parent_folder: parentFolder, name: cleanName, type: type })
       });
       const data = await res.json();
       if (data.success) {
-        this.setStatus.emit(`📝 Archivo creado: ${filename}`);
+        this.setStatus.emit(type === "file" ? `📝 Archivo creado: ${cleanName}` : `📁 Carpeta creada: ${cleanName}`);
         await this.refreshTree();
-        await this.itemClicked(data.path, "file");
+        if (type === "file") {
+          await this.itemClicked(data.path, "file");
+        }
       }
     } catch (err) {
       this.setStatus.emit(`Error: ${err.message}`);
@@ -814,7 +833,6 @@ const mockBridge = {
   },
 
   deleteItem: async function (path) {
-    if (!confirm(`¿Estás seguro de eliminar permanentemente ${path.split(/[\\/]/).pop()}?`)) return;
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/file/delete`, {
@@ -837,7 +855,6 @@ const mockBridge = {
 
   deleteCloudItem: async function (nodeStr) {
     const node = JSON.parse(nodeStr);
-    if (!confirm(`¿Estás seguro de eliminar de la nube ${node.name}?`)) return;
     try {
       this.showLoading.emit(true);
       const res = await fetch(`${API_BASE_URL}/api/file/delete`, {
@@ -947,16 +964,64 @@ const mockBridge = {
 
   saveFileBase64: async function (path, base64Data, callback) {
     try {
+      this.showLoading.emit(true);
+
+      // Buscar metadatos correctos de la pestaña en openTabs para evitar cruces
+      let tabInfo = { source: "local", remote_id: null, remote_repo: null, sha: null };
+      const tabs = (typeof openTabs !== 'undefined') ? openTabs : [];
+      const tab = tabs.find(t => t.path === path);
+      if (tab && tab.info) {
+        tabInfo = tab.info;
+      }
+
+      // Determinar mimetype correcto según la extensión del archivo
+      let mimetype = "image/png";
+      const ext = path.split('.').pop().toLowerCase();
+      if (ext === "xlsx" || ext === "xls") {
+        mimetype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      } else if (ext === "csv") {
+        mimetype = "text/csv";
+      } else if (ext === "docx" || ext === "doc") {
+        mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      }
+
+      const payload = {
+        path: path,
+        base64_data: base64Data,
+        source: tabInfo.source || (tab ? tab.source : "local"),
+        remote_id: tabInfo.remote_id || (tab ? tab.info?.remote_id : null),
+        remote_repo: tabInfo.remote_repo || (tab ? tab.info?.remote_repo : null),
+        sha: tabInfo.sha || (tab ? tab.info?.sha : null),
+        mimetype: mimetype
+      };
+
       const res = await fetch(`${API_BASE_URL}/api/file/base64/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, base64_data: base64Data })
+        body: JSON.stringify(payload)
       });
+      
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      callback(data.success);
+
+      if (data.sha) {
+        if (tab && tab.info) {
+          tab.info.sha = data.sha;
+        }
+      }
+      if (data.remote_id) {
+        if (tab && tab.info) {
+          tab.info.remote_id = data.remote_id;
+        }
+      }
+
+      callback(data.success || data.remote_id || data.sha ? true : false);
       await this.refreshTree();
     } catch (err) {
+      console.error(err);
       callback(false);
+    } finally {
+      this.showLoading.emit(false);
     }
   },
 
@@ -1062,14 +1127,24 @@ const mockBridge = {
       };
       const stylePrompt = styleOption ? stylePrompts[styleOption] : "";
       
-      const completePrompt = `Genera un diagrama de tipo ${diagramType} en sintaxis de Mermaid basado en la siguiente instrucción: ${prompt}.
+      let actualDiagramType = diagramType;
+      if (diagramType === 'class') actualDiagramType = 'classDiagram';
+      else if (diagramType === 'sequence' || diagramType === 'zenuml') actualDiagramType = 'sequenceDiagram';
+      else if (diagramType === 'erd') actualDiagramType = 'erDiagram';
+      else if (diagramType === 'state') actualDiagramType = 'stateDiagram';
+      else if (diagramType === 'architecture') actualDiagramType = 'architecture-beta';
+      else if (diagramType === 'venn') actualDiagramType = 'classDiagram';
+      else if (diagramType === 'ishikawa') actualDiagramType = 'graph LR';
+
+      const completePrompt = `Genera un diagrama de tipo ${actualDiagramType} en sintaxis de Mermaid basado en la siguiente instrucción: ${prompt}.
 Texto de referencia: ${selectedText}.
 Instrucción de Estilo: ${stylePrompt || "Estilo estándar legible."}
 Reglas estrictas:
 1. Devuelve ÚNICAMENTE el código del diagrama de Mermaid envuelto en un bloque de código \`\`\`mermaid ... \`\`\`, sin ninguna explicación, introducción o conclusión.
-2. Asegúrate de usar la sintaxis correcta del tipo de diagrama seleccionado. Por ejemplo, si es classDiagram, no uses flechas de flowchart.
-3. Si los textos dentro de los nodos contienen espacios o caracteres especiales, encuérralos entre comillas dobles (por ejemplo, A["Texto con espacios"]).
-4. Diseña una jerarquía lógica clara y atractiva.`;
+2. Asegúrate de iniciar el diagrama con la palabra clave exacta: '${actualDiagramType}'. No uses zenuml ni PlantUML.
+3. Asegúrate de usar la sintaxis correcta del tipo de diagrama seleccionado. Por ejemplo, si es classDiagram, no uses flechas de flowchart.
+4. Si los textos dentro de los nodos contienen espacios o caracteres especiales, encuérralos entre comillas dobles (por ejemplo, A["Texto con espacios"]).
+5. Diseña una jerarquía lógica clara y atractiva.`;
 
       const res = await fetch(`${API_BASE_URL}/api/ai/copilot`, {
         method: "POST",
