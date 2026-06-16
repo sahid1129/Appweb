@@ -45,6 +45,50 @@ from datetime import timedelta
 
 SESSIONS_JSON_PATH = Path(__file__).resolve().parent.parent / ".session_tokens.json"
 FAILED_LOGINS_PATH = Path(__file__).resolve().parent.parent / ".failed_logins.json"
+OAUTH_STATES_PATH = Path(__file__).resolve().parent.parent / ".oauth_states.json"
+
+def save_oauth_verifier(state: str, verifier: str):
+    try:
+        data = {}
+        if OAUTH_STATES_PATH.exists():
+            try:
+                with open(OAUTH_STATES_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                pass
+        data[state] = {
+            "verifier": verifier,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        # Clean up old states (older than 10 minutes)
+        now = datetime.utcnow()
+        clean_data = {}
+        for k, v in data.items():
+            try:
+                created = datetime.fromisoformat(v["created_at"])
+                if now - created < timedelta(minutes=10):
+                    clean_data[k] = v
+            except Exception:
+                pass
+        with open(OAUTH_STATES_PATH, "w", encoding="utf-8") as f:
+            json.dump(clean_data, f, indent=2)
+    except Exception:
+        pass
+
+def pop_oauth_verifier(state: str) -> Optional[str]:
+    if not state or not OAUTH_STATES_PATH.exists():
+        return None
+    try:
+        with open(OAUTH_STATES_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entry = data.pop(state, None)
+        with open(OAUTH_STATES_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        if entry:
+            return entry.get("verifier")
+    except Exception:
+        pass
+    return None
 
 def load_sessions() -> dict:
     if SESSIONS_JSON_PATH.exists():
@@ -1041,16 +1085,16 @@ def drive_auth(request: Request):
         prompt="consent",
         include_granted_scopes="true"
     )
-    # Guardar el code_verifier generado en memoria usando el state como clave para el callback
+    # Guardar el code_verifier generado en disco usando el state como clave para el callback (compatible con multi-worker)
     if hasattr(flow, "code_verifier") and flow.code_verifier:
-        _MEMORY_CONFIG[f"oauth_verifier_{state}"] = flow.code_verifier
+        save_oauth_verifier(state, flow.code_verifier)
         
     from fastapi.responses import RedirectResponse
     return RedirectResponse(auth_url)
 
 @app.get("/api/sync/drive/callback")
 def drive_callback(request: Request, code: str, state: str = None):
-    from app.services.sync_service import CREDS_PATH, _MEMORY_CONFIG
+    from app.services.sync_service import CREDS_PATH
     if not CREDS_PATH.exists():
         raise HTTPException(status_code=400, detail="No se encuentra credentials.json")
         
@@ -1061,10 +1105,10 @@ def drive_callback(request: Request, code: str, state: str = None):
     host = request.headers.get("host", "localhost:8000")
     redirect_uri = f"{scheme}://{host}/api/sync/drive/callback"
     
-    # Recuperar el code_verifier usando el parámetro state
+    # Recuperar el code_verifier usando el parámetro state desde disco
     code_verifier = None
     if state:
-        code_verifier = _MEMORY_CONFIG.pop(f"oauth_verifier_{state}", None)
+        code_verifier = pop_oauth_verifier(state)
         
     try:
         flow = Flow.from_client_secrets_file(
