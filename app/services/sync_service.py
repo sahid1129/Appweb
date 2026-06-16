@@ -171,6 +171,7 @@ class GoogleDriveSyncService:
         return self.service is not None
 
     def authenticate(self) -> bool:
+        self._load_token()  # Dynamic reload from config.json to sync across multiple worker processes
         try:
             from google_auth_oauthlib.flow import InstalledAppFlow
             from google.auth.transport.requests import Request
@@ -478,6 +479,7 @@ class GitHubSyncService:
         return self.g is not None
 
     def authenticate(self, token: str = None) -> Tuple[bool, str]:
+        self._load_token()  # Dynamic reload from config.json to sync across multiple worker processes
         self._increment_api()
         try:
             from github import Github, BadCredentialsException, RateLimitExceededException, GithubException
