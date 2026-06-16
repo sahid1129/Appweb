@@ -4,10 +4,33 @@
  * This acts as a drop-in replacement for the Qt 'bridge' object.
  */
 
-// Define global base URL for the API
-const API_BASE_URL = window.location.protocol === "file:"
-  ? "http://localhost:8000"
-  : window.location.origin;
+// Define global base URL for the API with advanced cross-origin and local network detection
+const API_BASE_URL = (function() {
+  if (window.location.protocol === "file:") {
+    return "http://localhost:8000";
+  }
+  const host = window.location.hostname;
+  const port = window.location.port;
+  
+  // Check if it is a local address (localhost, 127.0.0.1, or LAN IP like 192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  const isLocal = host === "localhost" || 
+                  host === "127.0.0.1" || 
+                  /^192\.168\./.test(host) || 
+                  /^10\./.test(host) || 
+                  /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(host);
+                  
+  if (isLocal) {
+    if (port === "8000") {
+      return window.location.origin;
+    } else {
+      // Use the same local IP/hostname but target the FastAPI backend port (8000)
+      return `${window.location.protocol}//${host}:8000`;
+    }
+  }
+  
+  // Production fallback (Render API backend)
+  return "https://appweb-o7pl.onrender.com";
+})();
 
 // Intercept fetch calls to automatically attach authentication & AI headers from localStorage
 const originalFetch = window.fetch;
