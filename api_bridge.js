@@ -71,6 +71,21 @@ window.fetch = function (input, init) {
     init.headers = headers;
   }
   return originalFetch(input, init).then(response => {
+    // Intercept response.json() to catch and provide detailed JSON format diagnostics
+    const originalJson = response.json;
+    response.json = function() {
+      return originalJson.call(response).catch(async err => {
+        try {
+          // Clone response to avoid consuming the body stream
+          const textBody = await response.clone().text();
+          console.error(`JSON Parse Error for URL: ${response.url}\nStatus: ${response.status}\nError: ${err.message}\nBody preview: ${textBody.substring(0, 500)}`);
+          throw new Error(`Error de formato JSON en ${response.url} (Status ${response.status}): ${err.message}\nRespuesta recibida: ${textBody.substring(0, 150)}...`);
+        } catch (e) {
+          throw new Error(`Error de formato JSON en ${response.url} (Status ${response.status}): ${err.message}`);
+        }
+      });
+    };
+
     if (response.status === 401) {
       if (!url.includes("/api/auth/login") && !url.includes("/api/auth/status") && !url.includes("/api/auth/setup") && !url.includes("/api/auth/verify")) {
         console.warn("Unauthorized API call detected, showing login overlay.");

@@ -296,6 +296,26 @@
               <button id="settings-github-connect-btn" class="primary" onclick="settingsGithubConnect()">Conectar y Cargar</button>
             </div>
             <div class="result" id="settings-github-result"></div>
+            
+            <!-- GitHub Connection Help Guide -->
+            <details class="help-details" style="margin-top: 15px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(255,255,255,0.02); outline: none;">
+              <summary style="padding: 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--accent); user-select: none; display: flex; align-items: center; gap: 6px;">
+                <span>❓ ¿Cómo obtener el Token de GitHub?</span>
+              </summary>
+              <div style="padding: 12px; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); border-top: 1px solid var(--border); overflow-y: auto; max-height: 180px;">
+                <ol style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px;">
+                  <li>Inicia sesión en <strong>GitHub.com</strong>.</li>
+                  <li>Haz clic en tu foto de perfil en la esquina superior derecha y selecciona <strong>Settings</strong> (Configuración).</li>
+                  <li>En el menú lateral izquierdo, baja hasta el final y haz clic en <strong>Developer settings</strong> (Configuración de desarrollador).</li>
+                  <li>Selecciona <strong>Personal access tokens</strong> y haz clic en <strong>Tokens (classic)</strong>.</li>
+                  <li>Haz clic en <strong>Generate new token</strong> -> <strong>Generate new token (classic)</strong>.</li>
+                  <li>Define una nota descriptiva (ej. <em>Launchpad App</em>) y selecciona el tiempo de expiración de tu preferencia.</li>
+                  <li>En la sección de scopes, selecciona la casilla de <strong>repo</strong> (esto es obligatorio para que la app pueda leer y guardar tus notas en tus repositorios).</li>
+                  <li>Haz clic en <strong>Generate token</strong> al final de la página.</li>
+                  <li><strong>Copia el token generado inmediatamente</strong> (empieza con <code>ghp_</code>) y pégalo arriba en el campo de texto. ¡No podrás volver a verlo en GitHub!</li>
+                </ol>
+              </div>
+            </details>
           </div>
           
           <!-- Drive Tab -->
@@ -317,6 +337,38 @@
               <select id="settings-drive-base-folder-id" style="width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 12px; outline: none; box-sizing: border-box;"></select>
             </div>
             <div class="result" id="settings-drive-result"></div>
+            
+            <!-- Google Drive Connection Help Guide -->
+            <details class="help-details" style="margin-top: 15px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(255,255,255,0.02); outline: none;">
+              <summary style="padding: 10px; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--accent); user-select: none; display: flex; align-items: center; gap: 6px;">
+                <span>❓ ¿Cómo obtener credentials.json y vincular Drive?</span>
+              </summary>
+              <div style="padding: 12px; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); border-top: 1px solid var(--border); overflow-y: auto; max-height: 180px;">
+                <ol style="margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px;">
+                  <li>Ve a Google Cloud: <a href="https://console.cloud.google.com/" target="_blank" style="color: var(--accent); text-decoration: underline;">console.cloud.google.com</a> e inicia sesión.</li>
+                  <li>Crea un proyecto nuevo haciendo clic en el selector de proyectos en la parte superior izquierda.</li>
+                  <li>Busca <strong>Google Drive API</strong> en la barra de búsqueda y haz clic en <strong>Habilitar</strong> (Enable).</li>
+                  <li>Configura la <strong>Pantalla de consentimiento de OAuth</strong> (OAuth consent screen):
+                    <ul style="margin-top: 4px; padding-left: 15px; list-style-type: circle; display: flex; flex-direction: column; gap: 4px;">
+                      <li>Elige tipo de usuario <strong>Externo</strong>.</li>
+                      <li>Completa los datos de la app (Nombre de App, correos de soporte y desarrollador).</li>
+                      <li>En la sección de scopes (permisos), añade <code>https://www.googleapis.com/auth/drive</code>.</li>
+                      <li><strong>IMPORTANTE:</strong> En <em>Test Users</em> (Usuarios de prueba), añade tu correo de Gmail con el que te conectarás.</li>
+                    </ul>
+                  </li>
+                  <li>Ve a la pestaña de <strong>Credenciales</strong> (Credentials):
+                    <ul style="margin-top: 4px; padding-left: 15px; list-style-type: circle; display: flex; flex-direction: column; gap: 4px;">
+                      <li>Haz clic en <strong>Crear Credenciales</strong> y selecciona <strong>ID de cliente de OAuth</strong>.</li>
+                      <li>Selecciona Tipo de aplicación: <strong>Web application</strong> (Aplicación web).</li>
+                      <li>Añade en <em>Authorized JavaScript origins</em>:<br><code>http://localhost:8000</code> y la URL de tu frontend (ej. <code>https://sahid1129.github.io</code>).</li>
+                      <li>Añade en <em>Authorized redirect URIs</em>:<br><code>http://localhost:8000/api/sync/drive/callback</code> y <code>https://appweb-o7pl.onrender.com/api/sync/drive/callback</code>.</li>
+                    </ul>
+                  </li>
+                  <li>Una vez guardado, haz clic en el botón de <strong>Descargar JSON</strong> en tu cliente OAuth creado y guárdalo como <code>credentials.json</code>.</li>
+                  <li>Regresa a este panel, sube el archivo usando <strong>Subir credentials.json...</strong> y luego haz clic en <strong>Vincular Cuenta (OAuth)</strong> para autorizar la conexión.</li>
+                </ol>
+              </div>
+            </details>
           </div>
 
           <!-- AI Models Tab -->
