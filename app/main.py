@@ -523,10 +523,20 @@ def get_current_config():
 @app.post("/api/config/save")
 def save_current_config(payload: ConfigSavePayload):
     try:
-        save_config(payload.config)
+        # Load the existing config on disk to merge and preserve backend-only keys
+        existing = load_config()
+        new_config = payload.config
+        
+        # Merge credentials if they are missing or empty in the payload to prevent accidental overwrites
+        for key in ["drive_token", "github_token"]:
+            if key not in new_config or not new_config[key]:
+                if existing.get(key):
+                    new_config[key] = existing[key]
+                    
+        save_config(new_config)
         # Recargar raíz si cambia
         global WORKSPACE_ROOT, file_manager, explorer_service
-        last_root = payload.config.get("last_root", "")
+        last_root = new_config.get("last_root", "")
         if last_root and Path(last_root).exists():
             WORKSPACE_ROOT = Path(last_root)
             file_manager = FileManagerService(WORKSPACE_ROOT)

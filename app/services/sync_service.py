@@ -45,11 +45,17 @@ def load_config() -> dict:
     ]:
         if os.environ.get(env_var):
             cfg[key] = os.environ.get(env_var).strip()
-    cfg.update(_MEMORY_CONFIG)
+    # ONLY override keys from _MEMORY_CONFIG that are relevant to request-specific AI overrides
+    # to avoid process-local pollution of disk keys (roots, drive_token, github_token, etc.)
+    for key in ["deepseek_api_key", "gemini_api_key", "active_ai_provider", "gemini_model"]:
+        if key in _MEMORY_CONFIG:
+            cfg[key] = _MEMORY_CONFIG[key]
     return cfg
 
 def save_config(data: dict):
-    _MEMORY_CONFIG.update(data)
+    # Only store AI overrides in the in-memory cache to prevent process-local contamination
+    ai_keys = ["deepseek_api_key", "gemini_api_key", "active_ai_provider", "gemini_model"]
+    _MEMORY_CONFIG.update({k: v for k, v in data.items() if k in ai_keys})
     CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
 
 # ========== Cache Helpers ==========
