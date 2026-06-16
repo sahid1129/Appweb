@@ -982,6 +982,8 @@ def get_drive_folders():
     try:
         folders = drive_sync.get_all_folders()
         return folders
+    except (RuntimeError, FileNotFoundError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -990,6 +992,8 @@ def get_drive_files(folder_id: str = "root"):
     try:
         files = drive_sync.list_files(folder_id)
         return {"success": True, "files": files}
+    except (RuntimeError, FileNotFoundError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
