@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="UTF-8">
@@ -29,7 +29,9 @@
       <div class="sep"></div>
       <button onclick="showSettingsDialog()" title="Ajustes y Conexiones"><span>⚙️</span><span class="btn-label">Ajustes</span></button>
       <button onclick="toggleTheme()" id="btn-theme-toggle" title="Cambiar Tema (Oscuro/Claro)"><span>🌙</span><span class="btn-label">Tema</span></button>
+      <span id="admin-badge" title="Administrador del sistema" style="display:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#1a0a00;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;letter-spacing:0.06em;cursor:default;user-select:none;align-self:center">ADMIN</span>
       <button onclick="logout()" title="Cerrar Sesión"><span>🚪</span><span class="btn-label">Salir</span></button>
+      <span id="sse-status-badge" title="Sin conexión de sincronización en tiempo real" style="font-size:10px;color:#ef4444;cursor:default;padding:0 4px;user-select:none;transition:color 0.3s" aria-label="Estado de sincronización">●</span>
     </div>
 
     <!-- Main -->
@@ -258,6 +260,7 @@
           <button class="settings-tab-btn" data-target="settings-tab-github" onclick="switchSettingsTab(event, 'settings-tab-github')">🐙 GitHub</button>
           <button class="settings-tab-btn" data-target="settings-tab-drive" onclick="switchSettingsTab(event, 'settings-tab-drive')">☁️ Google Drive</button>
           <button class="settings-tab-btn" data-target="settings-tab-deepseek" onclick="switchSettingsTab(event, 'settings-tab-deepseek')">🤖 Modelos IA</button>
+          <button class="settings-tab-btn" data-target="settings-tab-account" onclick="switchSettingsTab(event, 'settings-tab-account')">👤 Mi Cuenta</button>
         </div>
         <div class="settings-content">
           <!-- Roots Tab -->
@@ -411,6 +414,70 @@
               <button id="settings-deepseek-save-btn" class="primary" onclick="settingsDeepseekSave()">Guardar Configuración</button>
             </div>
             <div class="result" id="settings-deepseek-result"></div>
+          </div>
+
+          <!-- Account Tab (per-user workspace & integrations) -->
+          <div id="settings-tab-account" class="settings-tab-content">
+            <p class="tab-desc">Tu cuenta, tu carpeta de notas y tus conexiones a la nube. Estos ajustes son privados y solo tú (o el admin) puedes cambiarlos.</p>
+
+            <!-- Identity -->
+            <div class="settings-form-row">
+              <label>Sesión activa:</label>
+              <span id="settings-account-username" class="path-display">—</span>
+              <span id="settings-account-role" style="font-size: 11px; color: var(--text-muted); margin-left: 6px;"></span>
+            </div>
+
+            <!-- Workspace Root -->
+            <h4 style="margin: 16px 0 8px; font-size: 12px; color: var(--accent); letter-spacing: 0.04em;">📂 CARPETA DE TRABAJO</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin: 0 0 8px;">
+              Aquí se guardan tus notas locales. Cambiar esta carpeta no borra nada; sólo cambia dónde se leen y escriben tus archivos en esta cuenta.
+            </p>
+            <div class="settings-form-row">
+              <label>Carpeta actual:</label>
+              <span id="settings-account-workspace-path" class="path-display" style="word-break: break-all;">—</span>
+            </div>
+            <div class="settings-form-row">
+              <label>Nueva ruta (opcional):</label>
+              <input type="text" id="settings-account-workspace-input" placeholder="C:/Users/tu_usuario/Notas" />
+            </div>
+            <div class="settings-row-buttons">
+              <button id="settings-account-workspace-save-btn" class="primary" onclick="settingsAccountSaveWorkspace()">Guardar Carpeta</button>
+            </div>
+            <div class="result" id="settings-account-workspace-result"></div>
+
+            <!-- GitHub Integration -->
+            <h4 style="margin: 20px 0 8px; font-size: 12px; color: var(--accent); letter-spacing: 0.04em;">🐙 GITHUB (TU CUENTA)</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin: 0 0 8px;">
+              Conecta tu propio token de GitHub para sincronizar tus notas. Si lo dejas vacío, se usará el token global del servidor (sólo el admin puede configurarlo).
+            </p>
+            <div class="settings-form-row">
+              <label>Estado:</label>
+              <span id="settings-account-github-status" class="status-display">—</span>
+            </div>
+            <div class="settings-form-row">
+              <label>Token personal:</label>
+              <input type="password" id="settings-account-github-input" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx" autocomplete="off" />
+            </div>
+            <div class="settings-row-buttons">
+              <button id="settings-account-github-save-btn" class="primary" onclick="settingsAccountSaveGithub()">Guardar Token</button>
+              <button id="settings-account-github-clear-btn" class="danger-btn" onclick="settingsAccountClearGithub()" style="display:none;">Desconectar</button>
+            </div>
+            <div class="result" id="settings-account-github-result"></div>
+
+            <!-- Google Drive Integration -->
+            <h4 style="margin: 20px 0 8px; font-size: 12px; color: var(--accent); letter-spacing: 0.04em;">☁️ GOOGLE DRIVE (TU CUENTA)</h4>
+            <p style="font-size: 11px; color: var(--text-muted); margin: 0 0 8px;">
+              Vincula tu cuenta de Google Drive con OAuth. El archivo <code>credentials.json</code> es compartido por el servidor; cada usuario autoriza su propia cuenta.
+            </p>
+            <div class="settings-form-row">
+              <label>Estado:</label>
+              <span id="settings-account-drive-status" class="status-display">—</span>
+            </div>
+            <div class="settings-row-buttons">
+              <button id="settings-account-drive-link-btn" class="primary" onclick="settingsAccountLinkDrive()">Vincular mi Cuenta</button>
+              <button id="settings-account-drive-unlink-btn" class="danger-btn" onclick="settingsAccountUnlinkDrive()" style="display:none;">Desconectar</button>
+            </div>
+            <div class="result" id="settings-account-drive-result"></div>
           </div>
         </div>
       </div>
@@ -671,45 +738,72 @@
   <script src="assets/editor/lib/highlight.min.js"></script>
   <script src="assets/editor/lib/mermaid.min.js"></script>
   <script src="assets/editor/lib/pdf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
   <script src="ui.js"></script>
   
-  <!-- Login Overlay -->
+  <!-- ═══ LOGIN OVERLAY ════════════════════════════════════════════════ -->
   <div id="login-overlay">
-    <div class="login-box">
-      <div class="lock-icon">🔒</div>
-      <h2 id="login-title">Iniciar Sesión</h2>
-      <p id="login-desc">Ingresa tu usuario y contraseña para acceder a tus notas.</p>
-      
-      <!-- User Profile Badge (only shown during login) -->
-      <div id="login-user-profile" style="display: none; align-items: center; justify-content: center; gap: 10px; margin-bottom: 4px; background: rgba(255, 255, 255, 0.05); padding: 8px 16px; border-radius: 20px; border: 1px solid var(--border, rgba(255, 255, 255, 0.08));">
-        <span style="font-size: 16px;">👤</span>
-        <span id="login-profile-username" style="font-weight: 600; font-size: 14px; color: var(--accent, #6366f1);"></span>
-      </div>
-      
-      <!-- Username Input -->
-      <input type="text" id="login-username-input" placeholder="Usuario..." onkeydown="handleLoginKeydown(event)" />
-      
-      <!-- Password Input -->
-      <input type="password" id="login-password-input" placeholder="Contraseña..." onkeydown="handleLoginKeydown(event)" />
-      
-      <!-- Confirm Password (only for setup) -->
-      <input type="password" id="login-confirm-password-input" placeholder="Confirmar contraseña..." style="display: none;" onkeydown="handleLoginKeydown(event)" />
-      
-      <!-- Remember Me Checkbox -->
-      <div id="login-remember-container" class="checkbox-container">
-        <input type="checkbox" id="login-remember-me" />
-        <label for="login-remember-me">Mantener sesión iniciada</label>
+    <div class="login-container">
+
+      <!-- App branding -->
+      <div class="login-brand">
+        <div class="login-brand-icon">📒</div>
+        <span class="login-brand-name">Launchpad</span>
       </div>
 
-      <!-- Submit Button -->
-      <button id="login-submit-btn" onclick="submitAuth()">Entrar</button>
-      
-      <div id="login-error" class="error-msg"></div>
+      <!-- Phase 1: User card selector -->
+      <div id="login-phase-users" class="login-phase">
+        <p class="login-phase-label">¿Quién eres?</p>
+        <div id="login-users-grid" class="login-users-grid"></div>
+      </div>
+
+      <!-- Phase 2: Password entry -->
+      <div id="login-phase-password" class="login-phase" style="display:none">
+        <button class="login-back-btn" onclick="loginGoBack()">← Volver</button>
+        <div id="login-selected-user" class="login-selected-user">
+          <div id="login-sel-avatar" class="login-sel-avatar"></div>
+          <div>
+            <div id="login-sel-name" class="login-sel-name"></div>
+            <div id="login-sel-role" class="login-sel-role"></div>
+          </div>
+        </div>
+        <input type="password" id="login-password-input"
+               placeholder="Contraseña…"
+               class="login-input"
+               autocomplete="current-password"
+               onkeydown="if(event.key==='Enter') submitLogin()" />
+        <label class="login-remember-row">
+          <input type="checkbox" id="login-remember-me" />
+          <span class="login-remember-label">Mantener sesión iniciada</span>
+        </label>
+        <button class="login-btn-primary" onclick="submitLogin()">
+          <span>Entrar</span><span class="login-btn-arrow">→</span>
+        </button>
+        <div id="login-error" class="login-error"></div>
+      </div>
+
+      <!-- Phase 3: First-time setup (admin account creation) -->
+      <div id="login-phase-setup" class="login-phase" style="display:none">
+        <p class="login-phase-label">Crea tu cuenta de administrador</p>
+        <input type="text" id="setup-username-input"
+               placeholder="Nombre de usuario…"
+               class="login-input"
+               autocomplete="username"
+               onkeydown="if(event.key==='Enter') document.getElementById('setup-password-input').focus()" />
+        <input type="password" id="setup-password-input"
+               placeholder="Contraseña (mín. 4 caracteres)…"
+               class="login-input"
+               autocomplete="new-password"
+               onkeydown="if(event.key==='Enter') submitSetup()" />
+        <button class="login-btn-primary" onclick="submitSetup()">
+          <span>Crear cuenta</span><span class="login-btn-arrow">→</span>
+        </button>
+        <div id="setup-error" class="login-error"></div>
+      </div>
+
     </div>
   </div>
+
 </body>
 </html>

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Test artifacts
+tests/.logs/
+*.bak_test
+.session_token
+.session_tokens.json
+.failed_logins.json
+.users.json
+.oauth_states.json
+_api_cache/
+_temp_files/
+!tests/__init__.py
+!tests/_server.py
+!tests/test_auth.py
+!tests/test_sse_auth.py
+!tests/test_per_user_workspace.py
+
+# Local config with secrets
+config.json.local
+
+# OS
+.DS_Store
+Thumbs.db
