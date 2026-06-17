@@ -7,7 +7,8 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'%3E%3Cdefs%3E%3ClinearGradient id='gradient' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%23818cf8'/%3E%3Cstop offset='100%25' stop-color='%234f46e5'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='128' height='128' rx='32' fill='url(%23gradient)'/%3E%3Cpath d='M40,30 L88,30 M40,50 L88,50 M40,70 L70,70' stroke='white' stroke-width='8' stroke-linecap='round' opacity='0.4'/%3E%3Cpath d='M75,100 L95,80 L85,60 Z' fill='%2338bdf8'/%3E%3Cpath d='M95,80 L105,70 C110,65 110,55 105,50 C100,45 90,45 85,50 L75,60' stroke='%2338bdf8' stroke-width='8' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Ccircle cx='92' cy='36' r='12' fill='%23fbbf24'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="assets/editor/lib/toastui-editor.css">
   <link rel="stylesheet" href="assets/editor/lib/github.min.css">
-  <link rel="stylesheet" href="ui.css?v=2">
+  <link rel="stylesheet" href="ui.css?v=0dc9bc2">
+  <meta name="x-build-sha" content="0dc9bc2">
 </head>
 <body>
   <div id="app">
@@ -733,14 +734,14 @@
     </div>
   </div>
 
-  <script src="api_bridge.js?v=a1c208f"></script>
-  <script src="assets/editor/lib/toastui-editor.js?v=a1c208f"></script>
-  <script src="assets/editor/lib/highlight.min.js?v=a1c208f"></script>
-  <script src="assets/editor/lib/mermaid.min.js?v=a1c208f"></script>
-  <script src="assets/editor/lib/pdf.min.js?v=a1c208f"></script>
+  <script src="api_bridge.js?v=0dc9bc2"></script>
+  <script src="assets/editor/lib/toastui-editor.js?v=0dc9bc2"></script>
+  <script src="assets/editor/lib/highlight.min.js?v=0dc9bc2"></script>
+  <script src="assets/editor/lib/mermaid.min.js?v=0dc9bc2"></script>
+  <script src="assets/editor/lib/pdf.min.js?v=0dc9bc2"></script>
   <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html-docx-js@0.3.1/dist/html-docx.js"></script>
-  <script src="ui.js?v=a1c208f"></script>
+  <script src="ui.js?v=0dc9bc2"></script>
   
   <!-- ═══ LOGIN OVERLAY ════════════════════════════════════════════════ -->
   <div id="login-overlay">
@@ -749,38 +750,57 @@
       <!-- App branding -->
       <div class="login-brand">
         <div class="login-brand-icon">📒</div>
-        <span class="login-brand-name">Launchpad</span>
+        <div class="login-brand-text">
+          <span class="login-brand-name">Launchpad</span>
+          <span class="login-brand-tagline">Tus notas, en un solo lugar</span>
+        </div>
       </div>
 
       <!-- Phase 1: User card selector -->
       <div id="login-phase-users" class="login-phase">
         <p class="login-phase-label">¿Quién eres?</p>
         <div id="login-users-grid" class="login-users-grid"></div>
+        <button id="login-forgot-btn" class="login-link-btn" onclick="showPasswordResetModal()"
+                style="display:none">
+          ¿Olvidaste tu contraseña?
+        </button>
       </div>
 
       <!-- Phase 2: Password entry -->
       <div id="login-phase-password" class="login-phase" style="display:none">
-        <button class="login-back-btn" onclick="loginGoBack()">← Volver</button>
+        <button class="login-back-btn" onclick="loginGoBack()">
+          <span class="login-back-icon">←</span> Volver
+        </button>
         <div id="login-selected-user" class="login-selected-user">
           <div id="login-sel-avatar" class="login-sel-avatar"></div>
-          <div>
+          <div class="login-sel-text">
             <div id="login-sel-name" class="login-sel-name"></div>
             <div id="login-sel-role" class="login-sel-role"></div>
           </div>
         </div>
-        <input type="password" id="login-password-input"
-               placeholder="Contraseña…"
-               class="login-input"
-               autocomplete="current-password"
-               onkeydown="if(event.key==='Enter') submitLogin()" />
+        <div class="login-input-wrap">
+          <input type="password" id="login-password-input"
+                 placeholder="Contraseña…"
+                 class="login-input"
+                 autocomplete="current-password"
+                 onkeydown="if(event.key==='Enter') submitLogin()" />
+          <button type="button" class="login-input-toggle"
+                  onclick="togglePasswordVisibility('login-password-input', this)"
+                  aria-label="Mostrar contraseña">👁</button>
+        </div>
         <label class="login-remember-row">
           <input type="checkbox" id="login-remember-me" />
           <span class="login-remember-label">Mantener sesión iniciada</span>
         </label>
-        <button class="login-btn-primary" onclick="submitLogin()">
-          <span>Entrar</span><span class="login-btn-arrow">→</span>
+        <button class="login-btn-primary" id="login-submit-btn" onclick="submitLogin()">
+          <span class="login-btn-label">Entrar</span>
+          <span class="login-btn-arrow">→</span>
+          <span class="login-btn-spinner" style="display:none">⏳</span>
         </button>
-        <div id="login-error" class="login-error"></div>
+        <button class="login-link-btn" onclick="showPasswordResetModal()">
+          ¿Olvidaste tu contraseña?
+        </button>
+        <div id="login-error" class="login-error" role="alert"></div>
       </div>
 
       <!-- Phase 3: First-time setup (admin account creation) -->
@@ -791,19 +811,55 @@
                class="login-input"
                autocomplete="username"
                onkeydown="if(event.key==='Enter') document.getElementById('setup-password-input').focus()" />
-        <input type="password" id="setup-password-input"
-               placeholder="Contraseña (mín. 4 caracteres)…"
-               class="login-input"
-               autocomplete="new-password"
-               onkeydown="if(event.key==='Enter') submitSetup()" />
-        <button class="login-btn-primary" onclick="submitSetup()">
-          <span>Crear cuenta</span><span class="login-btn-arrow">→</span>
+        <div class="login-input-wrap">
+          <input type="password" id="setup-password-input"
+                 placeholder="Contraseña (mín. 4 caracteres)…"
+                 class="login-input"
+                 autocomplete="new-password"
+                 onkeydown="if(event.key==='Enter') submitSetup()" />
+          <button type="button" class="login-input-toggle"
+                  onclick="togglePasswordVisibility('setup-password-input', this)"
+                  aria-label="Mostrar contraseña">👁</button>
+        </div>
+        <button class="login-btn-primary" id="setup-submit-btn" onclick="submitSetup()">
+          <span class="login-btn-label">Crear cuenta</span>
+          <span class="login-btn-arrow">→</span>
+          <span class="login-btn-spinner" style="display:none">⏳</span>
         </button>
-        <div id="setup-error" class="login-error"></div>
+        <div id="setup-error" class="login-error" role="alert"></div>
       </div>
 
+      <!-- Build info -->
+      <div class="login-build-info" id="login-build-info"></div>
     </div>
   </div>
+
+  <!-- Password Reset Modal -->
+  <div id="password-reset-modal" class="login-modal-overlay" style="display:none">
+    <div class="login-modal">
+      <div class="login-modal-header">
+        <span class="login-modal-icon">🔑</span>
+        <h3>Recuperar contraseña</h3>
+        <button class="login-modal-close" onclick="closePasswordResetModal()">✕</button>
+      </div>
+      <div class="login-modal-body">
+        <p>Si olvidaste tu contraseña, contacta al administrador del servidor para que la restablezca usando la <strong>master key</strong> de Render.</p>
+        <p class="login-modal-hint">
+          Comando (ejecutar desde un shell con la master key):<br>
+          <code>curl -X POST -H "X-Admin-Key: &lt;key&gt;" -H "Content-Type: application/json" -d '{"username":"_admin","new_password":"nueva"}' <span id="modal-server-url"></span>/api/auth/admin/reset-password</code>
+        </p>
+        <p class="login-modal-footer-note">
+          Si el servidor tiene la master key configurada, el endpoint responde <code>200</code>. Si retorna <code>404</code>, el operador aún no configuró la variable de entorno.
+        </p>
+      </div>
+      <div class="login-modal-footer">
+        <button class="login-btn-secondary" onclick="closePasswordResetModal()">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast container (global) -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
 </body>
 </html>

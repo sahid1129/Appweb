@@ -95,6 +95,14 @@ function showStatus(msg) {
   if (el) el.textContent = msg;
 }
 
+// Populate the build info badge as soon as the DOM is ready so the
+// operator can see which commit is in the wild, even before login.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', setBuildInfo);
+} else {
+  setBuildInfo();
+}
+
 /* ========== QWebChannel ========== */
 new QWebChannel(qt.webChannelTransport, function(channel) {
   bridge = channel.objects.bridge;
@@ -5049,6 +5057,8 @@ function showLoginOverlay() {
   overlay.style.display = 'flex';
   _loginShowPhase('login-phase-users');
   _renderUserCards(window._loginUsers);
+  setBuildInfo();
+  maybeShowForgotLink();
 }
 
 function loginSelectUser(user) {
@@ -5081,7 +5091,9 @@ function submitLogin() {
   if (!user || !pwInput || !errEl) return;
   errEl.textContent = '';
   var password = pwInput.value;
-  if (!password) { errEl.textContent = 'La contrasena no puede estar vacia.'; return; }
+  if (!password) { errEl.textContent = 'La contraseña no puede estar vacía.'; return; }
+
+  setLoginLoading('login-submit-btn', 'login-submit-btn', 'login-submit-btn', null, true);
 
   fetch(API_BASE_URL + '/api/auth/login', {
     method: 'POST',
@@ -5090,13 +5102,19 @@ function submitLogin() {
   })
   .then(function(r) {
     if (r.ok) return r.json();
-    return r.json().then(function(d) { throw new Error(d.detail || 'Error al iniciar sesion'); });
+    return r.json().then(function(d) { throw new Error(d.detail || 'Error al iniciar sesión'); });
   })
   .then(function(res) {
     if (res.success && res.token) { pwInput.value = ''; _onLoginSuccess(res.token, res.username, res.is_admin); }
-    else { errEl.textContent = 'Error al iniciar sesion.'; }
+    else { errEl.textContent = 'Error al iniciar sesión.'; }
   })
-  .catch(function(err) { errEl.textContent = err.message; });
+  .catch(function(err) {
+    errEl.textContent = err.message;
+    showToast(err.message, 'error');
+  })
+  .finally(function() {
+    setLoginLoading('login-submit-btn', null, null, null, false);
+  });
 }
 
 function submitSetup() {
@@ -5108,7 +5126,9 @@ function submitSetup() {
   var username = unInput.value.trim();
   var password = pwInput.value;
   if (username.length < 2) { errEl.textContent = 'El usuario debe tener al menos 2 caracteres.'; return; }
-  if (password.length < 4) { errEl.textContent = 'La contrasena debe tener al menos 4 caracteres.'; return; }
+  if (password.length < 4) { errEl.textContent = 'La contraseña debe tener al menos 4 caracteres.'; return; }
+
+  setLoginLoading('setup-submit-btn', 'setup-submit-btn', 'setup-submit-btn', null, true);
 
   fetch(API_BASE_URL + '/api/auth/register', {
     method: 'POST',
@@ -5123,7 +5143,95 @@ function submitSetup() {
     if (res.success && res.token) { unInput.value = ''; pwInput.value = ''; _onLoginSuccess(res.token, res.username, res.is_admin); }
     else { errEl.textContent = 'Error al crear la cuenta.'; }
   })
-  .catch(function(err) { errEl.textContent = err.message; });
+  .catch(function(err) {
+    errEl.textContent = err.message;
+    showToast(err.message, 'error');
+  })
+  .finally(function() {
+    setLoginLoading('setup-submit-btn', null, null, null, false);
+  });
+}
+
+// ============================================================
+// Login UI helpers (Phase 3)
+// ============================================================
+
+function togglePasswordVisibility(inputId, btn) {
+  var input = document.getElementById(inputId);
+  if (!input) return;
+  if (input.type === 'password') {
+    input.type = 'text';
+    if (btn) btn.textContent = '🙈';
+  } else {
+    input.type = 'password';
+    if (btn) btn.textContent = '👁';
+  }
+}
+
+function setLoginLoading(btnId, spinnerId, labelId, arrowId, isLoading) {
+  var btn = document.getElementById(btnId);
+  var spinner = document.getElementById(spinnerId);
+  var label = document.getElementById(labelId);
+  var arrow = document.getElementById(arrowId);
+  if (btn) btn.disabled = !!isLoading;
+  if (spinner) spinner.style.display = isLoading ? 'inline-block' : 'none';
+  if (arrow) arrow.style.display = isLoading ? 'none' : 'inline';
+  if (label) label.style.opacity = isLoading ? '0.6' : '1';
+}
+
+function showToast(message, kind) {
+  // kind: undefined | 'error' | 'success'
+  var container = document.getElementById('toast-container');
+  if (!container) return;
+  var el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' toast-' + kind : '');
+  var icon = document.createElement('span');
+  icon.className = 'toast-icon';
+  icon.textContent = kind === 'error' ? '⚠️' : (kind === 'success' ? '✅' : 'ℹ️');
+  var txt = document.createElement('span');
+  txt.textContent = message;
+  el.appendChild(icon);
+  el.appendChild(txt);
+  container.appendChild(el);
+  setTimeout(function() {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  }, 5000);
+}
+
+function showPasswordResetModal() {
+  var modal = document.getElementById('password-reset-modal');
+  if (!modal) return;
+  // Populate the server URL hint dynamically
+  var urlSpan = document.getElementById('modal-server-url');
+  if (urlSpan) urlSpan.textContent = window.location.origin;
+  modal.style.display = 'flex';
+}
+
+function closePasswordResetModal() {
+  var modal = document.getElementById('password-reset-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+function setBuildInfo() {
+  // The build SHA is injected via <meta name="x-build-sha"> at deploy
+  // time; if not present we fall back to "dev". This is intentionally
+  // tiny so the operator can sanity-check which version is in the wild.
+  var meta = document.querySelector('meta[name="x-build-sha"]');
+  var sha = (meta && meta.getAttribute('content')) || 'dev';
+  var el = document.getElementById('login-build-info');
+  if (el) {
+    el.textContent = 'build ' + (sha === 'dev' ? sha : sha.substring(0, 7));
+    el.title = sha;
+  }
+}
+
+// Show the "forgot password" link whenever there is at least one user
+// (i.e. we are not in the first-time setup phase).
+function maybeShowForgotLink() {
+  var link = document.getElementById('login-forgot-btn');
+  if (!link) return;
+  var users = (window._loginUsers || []);
+  link.style.display = users.length > 0 ? 'block' : 'none';
 }
 
 function _onLoginSuccess(token, username, isAdmin) {

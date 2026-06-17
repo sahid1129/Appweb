@@ -82,7 +82,8 @@ class Server:
     def start(self, env_extra: Optional[dict] = None, timeout: float = 20.0,
               enable_bootstrap: bool = False,
               bootstrap_username: Optional[str] = None,
-              bootstrap_password: Optional[str] = None):
+              bootstrap_password: Optional[str] = None,
+              admin_key: Optional[str] = None):
         self._backup()
         env = os.environ.copy()
         # Disable the bootstrap admin by default for tests: the suite
@@ -97,6 +98,11 @@ class Server:
                 env["BOOTSTRAP_ADMIN_USERNAME"] = bootstrap_username
             if bootstrap_password:
                 env["BOOTSTRAP_ADMIN_PASSWORD"] = bootstrap_password
+        # Master-key recovery is opt-in per test. By default the env
+        # var is cleared so /api/auth/admin/reset-password returns 404.
+        env.pop("RENDER_ADMIN_KEY", None)
+        if admin_key:
+            env["RENDER_ADMIN_KEY"] = admin_key
         if env_extra:
             env.update(env_extra)
         self.proc = subprocess.Popen(

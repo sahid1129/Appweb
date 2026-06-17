@@ -14,9 +14,9 @@ Requires Python deps from `requirements.txt`.
 
 ## Run tests
 ```powershell
-python -m unittest tests.test_auth tests.test_sse_auth tests.test_per_user_workspace
+python -m unittest tests.test_auth tests.test_sse_auth tests.test_per_user_workspace tests.test_bootstrap_admin tests.test_admin_reset_password
 ```
-39 tests, ~37s. Each test class spins its own uvicorn subprocess on a free port and backs up the dev's local data files.
+56 tests, ~51s. Each test class spins its own uvicorn subprocess on a free port and backs up the dev's local data files.
 
 ## Login / Auth system
 - **Multi-user**. First registered user becomes admin. Users stored in `.users.json` with PBKDF2-hashed passwords.
@@ -27,6 +27,18 @@ python -m unittest tests.test_auth tests.test_sse_auth tests.test_per_user_works
 - Session duration: 24h (default) or 30d (`remember_me=true`).
 - PBKDF2: 600k iterations (OWASP 2023). Legacy 100k hashes still verify, opportunistically rehashed on next login.
 - `logout()` calls `POST /api/auth/logout`, clears all tokens from storage, calls `window.stopRealtimeSync()`, then shows login overlay.
+
+## Bootstrap admin & master-key recovery
+- On startup, if no users exist, a default admin is created from env vars:
+  - `BOOTSTRAP_ADMIN_USERNAME` (default: `_admin`)
+  - `BOOTSTRAP_ADMIN_PASSWORD` (default: `admin`)
+  - `BOOTSTRAP_ADMIN_DISABLED=1` to skip
+- Lazy fallback in `GET /api/auth/status` re-creates the admin if the persistent disk is wiped mid-flight.
+- **Master-key recovery** via `POST /api/auth/admin/reset-password` (gated by `RENDER_ADMIN_KEY` env var, returns 404 if unset):
+  - Header `X-Admin-Key: <key>`, body `{"username": "_admin", "new_password": "new"}`
+  - Constant-time compare via `hmac.compare_digest`
+  - Rate limit: 5 wrong attempts per IP per hour
+  - Logs every reset to stdout for audit
 
 ## Per-user workspace (Phase 2)
 - Each user gets their own `workspace_root` stored in `.users.json` under their record.
@@ -79,6 +91,7 @@ python -m unittest tests.test_auth tests.test_sse_auth tests.test_per_user_works
 | PUT | `/api/auth/users/{u}/workspace` | Set per-user workspace (admin or self) |
 | GET | `/api/auth/users/{u}/integrations` | Per-user integration status (booleans only) |
 | PUT | `/api/auth/users/{u}/integrations` | Set per-user GitHub/Drive tokens |
+| POST | `/api/auth/admin/reset-password` | Master-key password reset (gated by `RENDER_ADMIN_KEY`) |
 | GET | `/api/sync/drive/auth` | Initiate Drive OAuth (per-user via state tag) |
 
 ## Conventions

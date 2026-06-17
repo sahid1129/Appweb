@@ -2,6 +2,8 @@
 import os
 import re
 import asyncio
+import hmac
+import time
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
@@ -402,7 +404,7 @@ async def dynamic_auth_middleware(request: Request, call_next):
         else:
             pw_hash = cfg.get("app_password_hash", "")
     
-    PUBLIC_PATHS = {"/api/auth/status", "/api/auth/login", "/api/auth/users", "/api/auth/register", "/api/sync/drive/callback"}
+    PUBLIC_PATHS = {"/api/auth/status", "/api/auth/login", "/api/auth/users", "/api/auth/register", "/api/auth/admin/reset-password", "/api/sync/drive/callback"}
     if path.startswith("/api/") and path not in PUBLIC_PATHS:
         users_data = load_users()
         has_any_user = bool(users_data.get("users"))
@@ -598,6 +600,10 @@ class LoginPayload(BaseModel):
     username: str
     password: str
     remember_me: Optional[bool] = False
+
+class AdminResetPasswordPayload(BaseModel):
+    username: str
+    new_password: str
 
 class FileCreatePayload(BaseModel):
     parent_folder: str
@@ -1727,6 +1733,83 @@ def auth_verify(request: Request):
         is_admin = username.lower() == users_data.get("admin", "").lower() if username else False
         return {"success": True, "username": username, "is_admin": is_admin}
     raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+# ---------- Master-key password recovery ----------
+#
+# This endpoint is the safety valve for the case where the operator
+# forgets the bootstrap password. It is gated by RENDER_ADMIN_KEY
+# (or any env var you set), which is a long random string the operator
+# keeps outside the repo (in the Render dashboard, in a password
+# manager, etc.). If the env var is not set, the endpoint returns 404
+# so the feature is invisible to the rest of the app.
+#
+# Rate limit: 5 attempts per IP per hour.
+
+_admin_key_attempts: dict = {}  # ip -> [timestamps]
+_ADMIN_KEY_WINDOW = 3600       # 1 hour
+_ADMIN_KEY_MAX_ATTEMPTS = 5
+
+
+def _check_admin_key_rate_limit(ip: str) -> bool:
+    """Return True if the IP is allowed to attempt another reset."""
+    now = time.time()
+    arr = _admin_key_attempts.get(ip, [])
+    arr = [t for t in arr if now - t < _ADMIN_KEY_WINDOW]
+    if len(arr) >= _ADMIN_KEY_MAX_ATTEMPTS:
+        return False
+    arr.append(now)
+    _admin_key_attempts[ip] = arr
+    return True
+
+
+@app.post("/api/auth/admin/reset-password")
+def admin_reset_password(payload: AdminResetPasswordPayload, request: Request):
+    """Reset any user's password using the master key.
+
+    The endpoint is intentionally noisy in the log so the operator
+    can audit every reset. If the env var is not set, the endpoint
+    returns 404 so the feature is fully opt-in.
+    """
+    master = os.environ.get("RENDER_ADMIN_KEY", "").strip()
+    if not master:
+        # Feature not enabled on this deployment.
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    # Constant-time compare to avoid timing oracles.
+    presented = request.headers.get("X-Admin-Key", "")
+    if not presented or not hmac.compare_digest(presented, master):
+        client_ip = request.client.host if request.client else "unknown"
+        if not _check_admin_key_rate_limit(client_ip):
+            raise HTTPException(
+                status_code=429,
+                detail="Demasiados intentos. Vuelve a intentarlo más tarde.",
+            )
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    # Validate the new password using the same rules as register.
+    err = validate_password_strength(payload.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    users_data = load_users()
+    key = payload.username.strip().lower()
+    if key not in users_data["users"]:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    users_data["users"][key]["password_hash"] = hash_password(payload.new_password)
+    save_users(users_data)
+    user_store.invalidate_user_cache(payload.username)
+    print(
+        f"[AUTH] Master-key password reset: username={payload.username!r} "
+        f"remote={request.client.host if request.client else 'unknown'}",
+        flush=True,
+    )
+    return {
+        "success": True,
+        "username": users_data["users"][key]["username"],
+    }
+
 
 @app.post("/api/auth/register")
 def auth_register(payload: RegisterPayload, request: Request):
