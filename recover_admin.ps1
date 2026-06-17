@@ -33,12 +33,12 @@ Write-Host "This script helps you reset the admin password on Render."
 Write-Host ""
 Write-Host "BEFORE running this script you must:" -ForegroundColor Yellow
 Write-Host "  1. Go to https://dashboard.render.com/  (your service)" -ForegroundColor Yellow
-Write-Host "  2. Click 'Environment'" -ForegroundColor Yellow
+Write-Host "  2. Click Environment" -ForegroundColor Yellow
 Write-Host "  3. Add env var:  RENDER_ADMIN_KEY  =  (paste a long random string)" -ForegroundColor Yellow
 Write-Host "  4. Save and wait for the auto-redeploy (1-3 minutes)" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "If you don't have a key yet, generate one with:" -ForegroundColor Yellow
-Write-Host "  python -c 'import secrets; print(secrets.token_hex(32))'" -ForegroundColor Yellow
+Write-Host "If you do not have a key yet, generate one with:" -ForegroundColor Yellow
+Write-Host '  python -c "import secrets; print(secrets.token_hex(32))"' -ForegroundColor Yellow
 Write-Host ""
 
 $MasterKey = Read-Host "Paste your RENDER_ADMIN_KEY"
@@ -83,25 +83,28 @@ try {
         Write-Host "     or the latest redeploy is still in progress." -ForegroundColor Red
         Write-Host "  -> Check the Render dashboard and try again in 1-2 minutes." -ForegroundColor Red
         exit 1
-    } elseif ($StatusCode -eq 403) {
+    }
+    elseif ($StatusCode -eq 403) {
         Write-Host "Server returned 403 — invalid RENDER_ADMIN_KEY." -ForegroundColor Red
-        Write-Host "  -> The value you pasted does not match what's in Render." -ForegroundColor Red
+        Write-Host "  -> The value you pasted does not match what is in Render." -ForegroundColor Red
         $retry = Confirm "Try again?"
         if ($retry) {
             & $PSCommandPath
         }
         exit 1
-    } elseif ($StatusCode -eq 429) {
+    }
+    elseif ($StatusCode -eq 429) {
         Write-Host "Server returned 429 — too many failed attempts." -ForegroundColor Red
         Write-Host "  -> Wait an hour, then try again." -ForegroundColor Red
         exit 1
-    } else {
+    }
+    else {
         Write-Host "Server returned $StatusCode $ErrorBody" -ForegroundColor Red
         exit 1
     }
 }
 
-Write-Host "OK: password for '$Username' was reset." -ForegroundColor Green
+Write-Host "OK: password for $Username was reset." -ForegroundColor Green
 Write-Host ""
 Write-Host "You can now log in with:" -ForegroundColor Cyan
 Write-Host "  Username: $Username" -ForegroundColor White
@@ -136,7 +139,7 @@ if ($wipe) {
     Write-Host "will trigger the bootstrap admin (default: _admin / admin)." -ForegroundColor Cyan
     Write-Host ""
     Write-Host "If you have BOOTSTRAP_ADMIN_PASSWORD set on Render, the admin" -ForegroundColor Cyan
-    Write-Host "will be created with that password instead of 'admin'." -ForegroundColor Cyan
+    Write-Host "will be created with that password instead of the default." -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Visit https://sahid1129.github.io/Appweb/ and do a HARD REFRESH" -ForegroundColor Cyan
     Write-Host "(Ctrl+Shift+R) to clear the old session from localStorage." -ForegroundColor Cyan
