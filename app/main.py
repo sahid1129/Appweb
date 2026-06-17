@@ -241,40 +241,73 @@ def is_admin_token(token: str) -> bool:
     return username.lower() == users_data.get("admin", "").lower()
 
 def migrate_legacy_user():
-    """Migrate single-user config.json → .users.json on first run.
+    """Run the one-time startup tasks: legacy single-user migration, then
+    bootstrap a default admin if no users exist at all.
 
-    After a successful migration, the legacy ``app_username`` and
-    ``app_password_hash`` keys are stripped from ``config.json`` to avoid
-    leaving a stale plain-text reference to the admin account. Env-var
-    overrides are still respected on every config load.
+    The bootstrap admin is intended to make a fresh install (or a freshly
+    redeployed server) immediately usable. Credentials are read from
+    env vars ``BOOTSTRAP_ADMIN_USERNAME`` and ``BOOTSTRAP_ADMIN_PASSWORD``;
+    if not provided, defaults are ``_admin`` / ``admin``. The credentials
+    are printed to stdout so the operator can see them in the server log.
+    Disable by setting ``BOOTSTRAP_ADMIN_DISABLED=1``.
     """
     users_data = load_users()
-    if users_data["users"]:
-        return  # Already migrated or new install
-    cfg = load_config()
-    username = (os.environ.get("APP_USERNAME") or cfg.get("app_username", "")).strip()
-    pw_hash = (os.environ.get("APP_PASSWORD_HASH") or cfg.get("app_password_hash", "")).strip()
-    if username and pw_hash:
-        key = username.lower()
-        users_data["users"][key] = {
-            "username": username,
-            "display_name": username,
-            "password_hash": pw_hash,
-            "created_at": datetime.utcnow().isoformat(),
-            "last_login": None
-        }
-        users_data["admin"] = key
-        save_users(users_data)
 
-        # Best-effort cleanup of legacy keys from config.json. Skip if a env
-        # var override was used (so re-running without env still works).
-        if not os.environ.get("APP_USERNAME") and not os.environ.get("APP_PASSWORD_HASH"):
-            try:
-                cfg.pop("app_username", None)
-                cfg.pop("app_password_hash", None)
-                save_config(cfg)
-            except Exception:
-                pass
+    # 1) Legacy single-user config.json → .users.json (unchanged behaviour).
+    if not users_data["users"]:
+        cfg = load_config()
+        username = (os.environ.get("APP_USERNAME") or cfg.get("app_username", "")).strip()
+        pw_hash = (os.environ.get("APP_PASSWORD_HASH") or cfg.get("app_password_hash", "")).strip()
+        if username and pw_hash:
+            key = username.lower()
+            users_data["users"][key] = {
+                "username": username,
+                "display_name": username,
+                "password_hash": pw_hash,
+                "created_at": datetime.utcnow().isoformat(),
+                "last_login": None
+            }
+            users_data["admin"] = key
+            save_users(users_data)
+
+            # Best-effort cleanup of legacy keys from config.json.
+            if not os.environ.get("APP_USERNAME") and not os.environ.get("APP_PASSWORD_HASH"):
+                try:
+                    cfg.pop("app_username", None)
+                    cfg.pop("app_password_hash", None)
+                    save_config(cfg)
+                except Exception:
+                    pass
+
+    # 2) Bootstrap a default admin if there are still no users. This makes
+    #    a fresh deploy immediately usable so the operator does not have
+    #    to interact with the setup phase. Configurable via env vars.
+    if not users_data.get("users") and not os.environ.get("BOOTSTRAP_ADMIN_DISABLED"):
+        admin_username = os.environ.get("BOOTSTRAP_ADMIN_USERNAME", "_admin").strip() or "_admin"
+        admin_password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "admin")
+        if len(admin_password) < 4:
+            admin_password = "admin"  # honour the min-length rule
+        try:
+            now = datetime.utcnow().isoformat()
+            users_data["users"][admin_username.lower()] = {
+                "username": admin_username,
+                "display_name": admin_username,
+                "password_hash": hash_password(admin_password),
+                "created_at": now,
+                "last_login": None,
+                "workspace_root": str(WORKSPACE_ROOT) if WORKSPACE_ROOT else "",
+            }
+            users_data["admin"] = admin_username.lower()
+            save_users(users_data)
+            print(
+                f"\n[AUTH] Bootstrap admin created: username='{admin_username}' "
+                f"password='{admin_password}'\n"
+                f"       Override with BOOTSTRAP_ADMIN_USERNAME / "
+                f"BOOTSTRAP_ADMIN_PASSWORD env vars.\n"
+                f"       Disable by setting BOOTSTRAP_ADMIN_DISABLED=1.\n"
+            )
+        except Exception as e:
+            print(f"[AUTH] Failed to create bootstrap admin: {e}")
 
 # Lockout Rate Limiting Helpers
 def load_failed_logins() -> dict:
@@ -1651,8 +1684,18 @@ migrate_legacy_user()
 
 @app.get("/api/auth/status")
 def auth_status():
-    """Quick status: are there any users configured?"""
+    """Quick status: are there any users configured?
+
+    On the first call after startup, if the user store is empty, run the
+    bootstrap again. This is a safety net for the case where the import-time
+    ``migrate_legacy_user()`` ran before the persistent disk was mounted
+    (e.g. on Render, where the persistent disk is mounted at container
+    start, not at module import).
+    """
     users_data = load_users()
+    if not users_data.get("users") and not os.environ.get("BOOTSTRAP_ADMIN_DISABLED"):
+        migrate_legacy_user()
+        users_data = load_users()
     has_users = bool(users_data.get("users"))
     return {"success": True, "has_users": has_users, "password_set": has_users}
 

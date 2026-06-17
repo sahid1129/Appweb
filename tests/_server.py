@@ -79,9 +79,24 @@ class Server:
                     pass
         self._backups.clear()
 
-    def start(self, env_extra: Optional[dict] = None, timeout: float = 20.0):
+    def start(self, env_extra: Optional[dict] = None, timeout: float = 20.0,
+              enable_bootstrap: bool = False,
+              bootstrap_username: Optional[str] = None,
+              bootstrap_password: Optional[str] = None):
         self._backup()
         env = os.environ.copy()
+        # Disable the bootstrap admin by default for tests: the suite
+        # manages its own admin via the auth endpoints and must not
+        # collide with an admin left behind by a previous run. Tests
+        # that exercise the bootstrap path pass enable_bootstrap=True.
+        if not enable_bootstrap:
+            env["BOOTSTRAP_ADMIN_DISABLED"] = "1"
+        else:
+            env.pop("BOOTSTRAP_ADMIN_DISABLED", None)
+            if bootstrap_username:
+                env["BOOTSTRAP_ADMIN_USERNAME"] = bootstrap_username
+            if bootstrap_password:
+                env["BOOTSTRAP_ADMIN_PASSWORD"] = bootstrap_password
         if env_extra:
             env.update(env_extra)
         self.proc = subprocess.Popen(
