@@ -5084,31 +5084,52 @@ function loginGoBack() {
 }
 
 function submitLogin() {
+  console.log("[DEBUG] submitLogin: starting");
   var user = window._loginSelectedUser;
   var pwInput = document.getElementById('login-password-input');
   var remem = document.getElementById('login-remember-me');
   var errEl = document.getElementById('login-error');
-  if (!user || !pwInput || !errEl) return;
+  if (!user || !pwInput || !errEl) {
+    console.error("[DEBUG] submitLogin: missing required elements", {
+      hasUser: !!user, hasPw: !!pwInput, hasErr: !!errEl
+    });
+    return;
+  }
   errEl.textContent = '';
   var password = pwInput.value;
   if (!password) { errEl.textContent = 'La contraseña no puede estar vacía.'; return; }
 
   setLoginLoading('login-submit-btn', 'login-submit-btn', 'login-submit-btn', null, true);
 
-  fetch(API_BASE_URL + '/api/auth/login', {
+  var loginUrl = API_BASE_URL + '/api/auth/login';
+  console.log("[DEBUG] submitLogin: posting to", loginUrl, { username: user.username });
+
+  fetch(loginUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: user.username, password: password, remember_me: remem ? remem.checked : false })
   })
   .then(function(r) {
+    console.log("[DEBUG] submitLogin: response status", r.status);
     if (r.ok) return r.json();
-    return r.json().then(function(d) { throw new Error(d.detail || 'Error al iniciar sesión'); });
+    return r.json().then(function(d) {
+      console.log("[DEBUG] submitLogin: error body", d);
+      throw new Error(d.detail || 'Error al iniciar sesión');
+    });
   })
   .then(function(res) {
-    if (res.success && res.token) { pwInput.value = ''; _onLoginSuccess(res.token, res.username, res.is_admin); }
-    else { errEl.textContent = 'Error al iniciar sesión.'; }
+    console.log("[DEBUG] submitLogin: success body keys", Object.keys(res || {}));
+    if (res && res.success && res.token) {
+      pwInput.value = '';
+      console.log("[DEBUG] submitLogin: calling _onLoginSuccess");
+      _onLoginSuccess(res.token, res.username, res.is_admin);
+    } else {
+      console.error("[DEBUG] submitLogin: missing token/success", res);
+      errEl.textContent = 'Error al iniciar sesión.';
+    }
   })
   .catch(function(err) {
+    console.error("[DEBUG] submitLogin: caught", err);
     errEl.textContent = err.message;
     showToast(err.message, 'error');
   })
@@ -5235,18 +5256,45 @@ function maybeShowForgotLink() {
 }
 
 function _onLoginSuccess(token, username, isAdmin) {
-  localStorage.setItem('app_session_token', token);
-  sessionStorage.setItem('app_session_token', token);
-  localStorage.setItem('app_current_user', username || '');
-  localStorage.setItem('app_is_admin', isAdmin ? '1' : '0');
+  console.log("[DEBUG] _onLoginSuccess: starting", { token: token ? token.substring(0, 8) + "..." : null, username, isAdmin });
+  if (!token) {
+    console.error("[DEBUG] _onLoginSuccess: no token, aborting");
+    return;
+  }
+  // 1) Persist the session FIRST so any later failure does not lose it.
+  try {
+    localStorage.setItem('app_session_token', token);
+    sessionStorage.setItem('app_session_token', token);
+    localStorage.setItem('app_current_user', username || '');
+    localStorage.setItem('app_is_admin', isAdmin ? '1' : '0');
+  } catch (e) {
+    console.error("[DEBUG] _onLoginSuccess: storage write failed", e);
+  }
+  // 2) Hide the overlay IMMEDIATELY. The bug we are fixing is that a
+  //    later code path (syncConfigFromServer -> showLoginOverlay) was
+  //    re-showing it. Hide it first, run the rest, and re-hide at the
+  //    end to be safe.
   var overlay = document.getElementById('login-overlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+    console.log("[DEBUG] _onLoginSuccess: overlay hidden");
+  }
+  try { _updateAdminBadge(isAdmin); } catch (e) { console.error(e); }
+  try { _applyAdminGating(isAdmin); } catch (e) { console.error(e); }
+  try { initTheme(); } catch (e) { console.error(e); }
+  try { syncConfigFromServer(); } catch (e) { console.error(e); }
+  try {
+    if (bridge && typeof bridge.refreshTree === 'function') bridge.refreshTree();
+  } catch (e) { console.error(e); }
+  try {
+    if (typeof window.initRealtimeSync === 'function') window.initRealtimeSync();
+  } catch (e) { console.error(e); }
+  // 3) Re-hide the overlay one last time in case any of the above
+  //    callbacks (notably syncConfigFromServer's success path) showed
+  //    it again. This is the safety net.
+  overlay = document.getElementById('login-overlay');
   if (overlay) overlay.style.display = 'none';
-  _updateAdminBadge(isAdmin);
-  _applyAdminGating(isAdmin);
-  initTheme();
-  syncConfigFromServer();
-  if (bridge && typeof bridge.refreshTree === 'function') bridge.refreshTree();
-  if (typeof window.initRealtimeSync === 'function') window.initRealtimeSync();
+  console.log("[DEBUG] _onLoginSuccess: done");
 }
 
 function _updateAdminBadge(isAdmin) {
@@ -5285,6 +5333,7 @@ function adminDeleteUser(username, callback) {
 function submitAuth() {}
 function handleLoginKeydown(e) { if (e.key === 'Enter') submitLogin(); }
 function syncConfigFromServer() {
+  console.log("[DEBUG] syncConfigFromServer: starting");
   fetch(API_BASE_URL + "/api/config")
     .then(r => {
       if (r.ok) return r.json();
@@ -5298,7 +5347,7 @@ function syncConfigFromServer() {
         if (cfg.gemini_model) localStorage.setItem("gemini_model", cfg.gemini_model);
         if (cfg.active_ai_provider) localStorage.setItem("active_ai_provider", cfg.active_ai_provider);
       }
-      showLoginOverlay();
+      console.log("[DEBUG] syncConfigFromServer: done, NOT showing login overlay");
     })
     .catch(err => console.error("Error sincronizando config desde el servidor:", err));
 }
