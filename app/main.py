@@ -1867,6 +1867,52 @@ def admin_wipe_users(request: Request):
 
 
 @app.post("/api/auth/register")
+@app.get("/api/auth/admin/help")
+def admin_help():
+    """Diagnostic endpoint for the master-key recovery flow.
+
+    Returns information about whether the master-key features are
+    enabled, plus step-by-step recovery instructions. Public so the
+    operator can probe the server from a shell without auth.
+    """
+    has_master_key = bool(os.environ.get("RENDER_ADMIN_KEY", "").strip())
+    users_data = load_users()
+    has_users = bool(users_data.get("users"))
+    admin_count = sum(1 for u in users_data["users"].values()
+                      if u.get("username", "").lower() == users_data.get("admin", "").lower())
+    return {
+        "success": True,
+        "has_users": has_users,
+        "admin_count": admin_count,
+        "master_key_configured": has_master_key,
+        "instructions": {
+            "if_master_key_configured": (
+                "RENDER_ADMIN_KEY is set. You can run recover_admin.ps1 to "
+                "reset a password or wipe the user store."
+            ),
+            "if_master_key_missing": (
+                "RENDER_ADMIN_KEY is NOT set on this deployment. The fastest "
+                "recovery path is to go to the Render dashboard -> Environment, "
+                "add a new env var RENDER_ADMIN_KEY=<a-long-random-string>, "
+                "save (Render auto-redeploys), wait 1-3 minutes, then run "
+                "recover_admin.ps1 with that key."
+            ),
+            "alternative_no_master_key": (
+                "If you cannot access the Render dashboard, the alternative is "
+                "to change BOOTSTRAP_ADMIN_PASSWORD in the dashboard to a value "
+                "you know. Render will auto-redeploy and you can log in with "
+                "the new password. Use change_bootstrap_password.ps1 for a "
+                "guided walkthrough."
+            ),
+            "after_recovery": (
+                "After resetting, do a hard refresh in your browser "
+                "(Ctrl+Shift+R) to clear the stale localStorage session."
+            ),
+        },
+    }
+
+
+@app.post("/api/auth/register")
 def auth_register(payload: RegisterPayload, request: Request):
     """Create a new user. First user is always admin and requires no auth.
     Subsequent users require a valid admin session token."""
