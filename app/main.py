@@ -1,12 +1,14 @@
 # app/main.py
 import os
 import re
+import asyncio
 import urllib.parse
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from fastapi import FastAPI, HTTPException, Query, status, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Import services
@@ -20,6 +22,7 @@ from app.services.sync_service import (
 from app.services.file_manager import FileManagerService
 from app.services.explorer import ExplorerService
 from app.services.ai_service import AIService
+from app.services import user_store
 
 app = FastAPI(
     title="Launchpad Web API",
@@ -46,8 +49,9 @@ from datetime import timedelta
 SESSIONS_JSON_PATH = Path(__file__).resolve().parent.parent / ".session_tokens.json"
 FAILED_LOGINS_PATH = Path(__file__).resolve().parent.parent / ".failed_logins.json"
 OAUTH_STATES_PATH = Path(__file__).resolve().parent.parent / ".oauth_states.json"
+USERS_PATH = Path(__file__).resolve().parent.parent / ".users.json"
 
-def save_oauth_verifier(state: str, verifier: str):
+def save_oauth_verifier(state: str, verifier: str, username: str = ""):
     try:
         data = {}
         if OAUTH_STATES_PATH.exists():
@@ -58,6 +62,7 @@ def save_oauth_verifier(state: str, verifier: str):
                 pass
         data[state] = {
             "verifier": verifier,
+            "username": username,
             "created_at": datetime.utcnow().isoformat()
         }
         # Clean up old states (older than 10 minutes)
@@ -75,7 +80,8 @@ def save_oauth_verifier(state: str, verifier: str):
     except Exception:
         pass
 
-def pop_oauth_verifier(state: str) -> Optional[str]:
+def pop_oauth_verifier(state: str) -> Optional[dict]:
+    """Return the full state entry (verifier, username) or None."""
     if not state or not OAUTH_STATES_PATH.exists():
         return None
     try:
@@ -84,11 +90,9 @@ def pop_oauth_verifier(state: str) -> Optional[str]:
         entry = data.pop(state, None)
         with open(OAUTH_STATES_PATH, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
-        if entry:
-            return entry.get("verifier")
+        return entry
     except Exception:
-        pass
-    return None
+        return None
 
 def load_sessions() -> dict:
     if SESSIONS_JSON_PATH.exists():
@@ -159,21 +163,118 @@ def remove_session_token(token: str):
         del sessions[token_hash]
         save_sessions(sessions)
 
-def hash_password(password: str, salt: bytes = None) -> str:
+# OWASP 2023 recommends >= 600000 iterations for PBKDF2-HMAC-SHA256.
+# Legacy hashes used 100000 — keep verifying those, but new hashes use the
+# stronger value. Stored format: "iterations:salt_hex:hash_hex".
+PBKDF2_ITERATIONS = 600000
+PBKDF2_LEGACY_ITERATIONS = 100000
+
+def hash_password(password: str, salt: bytes = None, iterations: int = PBKDF2_ITERATIONS) -> str:
     if salt is None:
         salt = os.urandom(16)
-    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
-    return salt.hex() + ":" + pwd_hash.hex()
+    pwd_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
+    return f"{iterations}:{salt.hex()}:{pwd_hash.hex()}"
 
 def verify_password(stored_hash_str: str, password: str) -> bool:
     try:
-        salt_hex, hash_hex = stored_hash_str.split(":")
+        parts = stored_hash_str.split(":")
+        if len(parts) == 3:
+            iterations = int(parts[0])
+            salt_hex, hash_hex = parts[1], parts[2]
+        elif len(parts) == 2:
+            # Legacy: "salt:hash" assumed 100k iterations.
+            iterations = PBKDF2_LEGACY_ITERATIONS
+            salt_hex, hash_hex = parts[0], parts[1]
+        else:
+            return False
         salt = bytes.fromhex(salt_hex)
         pwd_hash = bytes.fromhex(hash_hex)
-        new_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+        new_hash = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
         return pwd_hash == new_hash
     except Exception:
         return False
+
+# ── Multi-User Store ─────────────────────────────────────────────────────────
+
+def load_users() -> dict:
+    if USERS_PATH.exists():
+        try:
+            with open(USERS_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict) and "users" in data:
+                    return data
+        except Exception:
+            pass
+    return {"users": {}, "admin": ""}
+
+def save_users(data: dict):
+    try:
+        USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(USERS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+def get_session_username(token: str) -> Optional[str]:
+    """Return username associated with a valid session token, or None."""
+    if not token:
+        return None
+    sessions = load_sessions()
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    session = sessions.get(token_hash)
+    if not session:
+        return None
+    try:
+        expires_at = datetime.fromisoformat(session["expires_at"])
+        if datetime.utcnow() > expires_at:
+            return None
+        return session.get("username")
+    except Exception:
+        return None
+
+def is_admin_token(token: str) -> bool:
+    """Return True if the token belongs to the admin user."""
+    username = get_session_username(token)
+    if not username:
+        return False
+    users_data = load_users()
+    return username.lower() == users_data.get("admin", "").lower()
+
+def migrate_legacy_user():
+    """Migrate single-user config.json → .users.json on first run.
+
+    After a successful migration, the legacy ``app_username`` and
+    ``app_password_hash`` keys are stripped from ``config.json`` to avoid
+    leaving a stale plain-text reference to the admin account. Env-var
+    overrides are still respected on every config load.
+    """
+    users_data = load_users()
+    if users_data["users"]:
+        return  # Already migrated or new install
+    cfg = load_config()
+    username = (os.environ.get("APP_USERNAME") or cfg.get("app_username", "")).strip()
+    pw_hash = (os.environ.get("APP_PASSWORD_HASH") or cfg.get("app_password_hash", "")).strip()
+    if username and pw_hash:
+        key = username.lower()
+        users_data["users"][key] = {
+            "username": username,
+            "display_name": username,
+            "password_hash": pw_hash,
+            "created_at": datetime.utcnow().isoformat(),
+            "last_login": None
+        }
+        users_data["admin"] = key
+        save_users(users_data)
+
+        # Best-effort cleanup of legacy keys from config.json. Skip if a env
+        # var override was used (so re-running without env still works).
+        if not os.environ.get("APP_USERNAME") and not os.environ.get("APP_PASSWORD_HASH"):
+            try:
+                cfg.pop("app_username", None)
+                cfg.pop("app_password_hash", None)
+                save_config(cfg)
+            except Exception:
+                pass
 
 # Lockout Rate Limiting Helpers
 def load_failed_logins() -> dict:
@@ -245,15 +346,9 @@ def reset_failed_logins(ip: str, username: str):
         save_failed_logins(data)
 
 def validate_password_strength(password: str) -> str:
-    """Validate strength (min 8 chars, mixed case, digit). Returns error msg or empty string."""
-    if len(password) < 8:
-        return "La contraseña debe tener al menos 8 caracteres."
-    if not re.search(r"[a-z]", password):
-        return "La contraseña debe contener al menos una letra minúscula."
-    if not re.search(r"[A-Z]", password):
-        return "La contraseña debe contener al menos una letra mayúscula."
-    if not re.search(r"\d", password):
-        return "La contraseña debe contener al menos un número."
+    """Validate password (min 4 chars). Returns error msg or empty string."""
+    if len(password) < 4:
+        return "La contraseña debe tener al menos 4 caracteres."
     return ""
 
 @app.middleware("http")
@@ -274,8 +369,11 @@ async def dynamic_auth_middleware(request: Request, call_next):
         else:
             pw_hash = cfg.get("app_password_hash", "")
     
-    if path.startswith("/api/") and path not in ("/api/auth/status", "/api/auth/setup", "/api/auth/login", "/api/sync/drive/callback"):
-        if pw_hash:
+    PUBLIC_PATHS = {"/api/auth/status", "/api/auth/login", "/api/auth/users", "/api/auth/register", "/api/sync/drive/callback"}
+    if path.startswith("/api/") and path not in PUBLIC_PATHS:
+        users_data = load_users()
+        has_any_user = bool(users_data.get("users"))
+        if has_any_user:
             session_token = request.headers.get("x-session-token") or request.query_params.get("token")
             if not session_token or not verify_session_token(session_token):
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing session token"})
@@ -317,12 +415,87 @@ async def dynamic_auth_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
+# ============================================================
+# Real-Time Event Broadcasting (Server-Sent Events)
+# ============================================================
+
+class EventBroadcaster:
+    """Manages a list of active SSE client queues and broadcasts events to all."""
+    def __init__(self):
+        self._clients: List[asyncio.Queue] = []
+        self._lock: Optional[asyncio.Lock] = None  # Created lazily inside event loop
+
+    def _get_lock(self) -> asyncio.Lock:
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
+
+    async def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=50)
+        async with self._get_lock():
+            self._clients.append(q)
+        return q
+
+    async def unsubscribe(self, q: asyncio.Queue):
+        async with self._get_lock():
+            try:
+                self._clients.remove(q)
+            except ValueError:
+                pass
+
+    async def broadcast(self, event_type: str, data: dict):
+        """Send an SSE event to all connected clients."""
+        import json
+        payload = json.dumps({"type": event_type, **data})
+        dead: List[asyncio.Queue] = []
+        async with self._get_lock():
+            clients = list(self._clients)
+        for q in clients:
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                dead.append(q)
+        # Remove unresponsive clients
+        if dead:
+            async with self._get_lock():
+                for q in dead:
+                    try:
+                        self._clients.remove(q)
+                    except ValueError:
+                        pass
+
+    def broadcast_sync(self, event_type: str, data: dict):
+        """Thread-safe wrapper to broadcast from sync (non-async) route handlers."""
+        import json
+        payload = json.dumps({"type": event_type, **data})
+        dead: List[asyncio.Queue] = []
+        clients = list(self._clients)
+        for q in clients:
+            try:
+                q.put_nowait(payload)
+            except asyncio.QueueFull:
+                dead.append(q)
+            except Exception:
+                dead.append(q)
+        # Best-effort cleanup (no lock in sync context)
+        for q in dead:
+            try:
+                self._clients.remove(q)
+            except (ValueError, Exception):
+                pass
+
+
+broadcaster = EventBroadcaster()
+
+
 # Inicializar servicios
 drive_sync = GoogleDriveSyncService()
 github_sync = GitHubSyncService()
 ai_service = AIService()
 
-# Determinar la carpeta raíz del workspace
+# Determine the fallback workspace root. Used when no per-user
+# workspace_root is configured (anonymous requests, or users who haven't
+# been assigned one yet).
 cfg = load_config()
 WORKSPACE_ROOT = Path(cfg.get("last_root", ""))
 if not WORKSPACE_ROOT or not WORKSPACE_ROOT.exists():
@@ -330,6 +503,36 @@ if not WORKSPACE_ROOT or not WORKSPACE_ROOT.exists():
 
 file_manager = FileManagerService(WORKSPACE_ROOT)
 explorer_service = ExplorerService(WORKSPACE_ROOT, drive_sync, github_sync)
+
+
+# ========== Per-user resolution helpers ==========
+
+def get_workspace_root_for_token(token: str) -> Path:
+    """Return the workspace root for the session identified by ``token``.
+
+    Falls back to the global ``WORKSPACE_ROOT`` if the token is invalid
+    or no per-user workspace is configured. Used by per-user endpoints
+    so each user sees their own folder.
+    """
+    username = get_session_username(token)
+    if username:
+        return user_store.get_workspace_root(username)
+    return WORKSPACE_ROOT
+
+
+def get_services_for_token(token: str):
+    """Return ``(file_manager, explorer_service, github, drive)`` for the
+    session. Each user gets a ``FileManagerService`` rooted in their own
+    workspace and per-user ``GitHubSyncService``/``GoogleDriveSyncService``
+    instances.
+    """
+    root = get_workspace_root_for_token(token)
+    fm = FileManagerService(root)
+    username = get_session_username(token) or ""
+    gh = user_store.get_github_service_for(username) if username else github_sync
+    dr = user_store.get_drive_service_for(username) if username else drive_sync
+    ex = ExplorerService(root, dr, gh)
+    return fm, ex, gh, dr
 
 
 # --- Modelos de Peticiones (Pydantic) ---
@@ -547,8 +750,12 @@ def save_current_config(payload: ConfigSavePayload):
 
 # Workspace Explorer Tree
 @app.get("/api/tree")
-def get_tree():
+def get_tree(request: Request):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        if token:
+            _, ex, _, _ = get_services_for_token(token)
+            return ex.build_workspace_tree()
         return explorer_service.build_workspace_tree()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -556,6 +763,7 @@ def get_tree():
 # Leer archivos (Local, GitHub o Google Drive)
 @app.get("/api/file/read")
 def read_file(
+    request: Request,
     path: str,
     source: str = "local",
     remote_id: Optional[str] = None,
@@ -563,9 +771,11 @@ def read_file(
     sha: Optional[str] = None
 ):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, ex, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
         if source == "local":
-            # Retornar contenido de texto local
-            content = file_manager.read_text_file(path)
+            # Retornar contenido de texto local (workspace del usuario)
+            content = fm.read_text_file(path)
             return {
                 "path": path,
                 "name": Path(path).name,
@@ -574,14 +784,14 @@ def read_file(
                 "suffix": Path(path).suffix.lower(),
                 "info": {"source": "local"}
             }
-        
+
         elif source == "drive":
             if not remote_id:
                 raise HTTPException(status_code=400, detail="Falta remote_id para archivo de Drive")
-            content = drive_sync.download(remote_id)
+            content = dr.download(remote_id)
             if content is None:
                 raise HTTPException(status_code=500, detail="Error descargando archivo de Google Drive")
-            
+
             # Guardamos caché local temporal en _temp_files para que el visualizador funcione si es necesario
             temp_path = Path(__file__).resolve().parent.parent / "_temp_files" / f"drive_{remote_id}.md"
             temp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -599,11 +809,11 @@ def read_file(
         elif source == "github":
             if not remote_repo or not path:
                 raise HTTPException(status_code=400, detail="Faltan parámetros de repositorio/ruta para GitHub")
-            
-            if not github_sync.is_authenticated:
+
+            if not gh.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
 
-            content = github_sync.download(remote_repo, path)
+            content = gh.download(remote_repo, path)
             if content is None:
                 raise HTTPException(status_code=404, detail="Archivo no encontrado en GitHub o error de descarga")
 
@@ -613,7 +823,7 @@ def read_file(
             temp_path.parent.mkdir(parents=True, exist_ok=True)
             temp_path.write_text(content, encoding="utf-8")
 
-            current_sha = sha or github_sync.get_sha(remote_repo, path)
+            current_sha = sha or gh.get_sha(remote_repo, path)
 
             return {
                 "path": str(temp_path),
@@ -634,50 +844,64 @@ def read_file(
 
 # Guardar archivos (Local, GitHub o Google Drive)
 @app.post("/api/file/save")
-def save_file(payload: FileSavePayload):
+def save_file(payload: FileSavePayload, request: Request):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, ex, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
+        result = None
         if payload.source == "local":
-            file_manager.save_text_file(payload.path, payload.content)
-            return {"success": True, "message": "Archivo guardado localmente"}
+            fm.save_text_file(payload.path, payload.content)
+            result = {"success": True, "message": "Archivo guardado localmente"}
 
         elif payload.source == "drive":
             if payload.remote_id:
                 # Actualizar archivo existente en Google Drive
-                ok, modified_time = drive_sync.upload(payload.remote_id, payload.content, payload.mimetype)
+                ok, modified_time = dr.upload(payload.remote_id, payload.content, payload.mimetype)
                 if not ok:
                     raise HTTPException(status_code=500, detail="Error al subir cambios a Google Drive")
-                return {"success": True, "modifiedTime": modified_time}
+                result = {"success": True, "modifiedTime": modified_time}
             else:
                 # Crear nuevo archivo en Drive
                 cfg_drive = load_config()
                 parent_id = cfg_drive.get("drive_base_folder_id", "") or "root"
                 name = Path(payload.path).name if payload.path else "Sin_titulo.md"
-                ok, fid, mtime = drive_sync.create_file(parent_id, name, payload.content, payload.mimetype)
+                ok, fid, mtime = dr.create_file(parent_id, name, payload.content, payload.mimetype)
                 if not ok:
                     raise HTTPException(status_code=500, detail="Error al crear archivo en Google Drive")
-                return {"success": True, "remote_id": fid, "modifiedTime": mtime}
+                result = {"success": True, "remote_id": fid, "modifiedTime": mtime}
 
         elif payload.source == "github":
             github_path = payload.remote_id or payload.path
             if not payload.remote_repo or not github_path:
                 raise HTTPException(status_code=400, detail="Faltan repositorio o ruta para GitHub")
-            
-            if not github_sync.is_authenticated:
+
+            if not gh.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
 
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
+            sha = payload.sha or gh.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             if not sha:
                 raise HTTPException(status_code=404, detail="No se pudo obtener el SHA del archivo en GitHub para el commit")
 
-            ok = github_sync.commit(payload.remote_repo, github_path, payload.content, sha, "Edit via Launchpad Web")
+            ok = gh.commit(payload.remote_repo, github_path, payload.content, sha, "Edit via Launchpad Web")
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al hacer commit en GitHub")
-            
-            new_sha = github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
-            return {"success": True, "sha": new_sha}
+
+            new_sha = gh.get_sha(payload.remote_repo, github_path, bypass_cache=True)
+            result = {"success": True, "sha": new_sha}
 
         else:
             raise HTTPException(status_code=400, detail=f"Origen no soportado: {payload.source}")
+
+        # Broadcast real-time event to all connected clients
+        if result and result.get("success"):
+            broadcaster.broadcast_sync("file_saved", {
+                "path": payload.path,
+                "source": payload.source,
+                "remote_id": payload.remote_id or "",
+                "remote_repo": payload.remote_repo or "",
+                "saved_at": datetime.utcnow().isoformat()
+            })
+        return result
 
     except HTTPException as he:
         raise he
@@ -686,12 +910,19 @@ def save_file(payload: FileSavePayload):
 
 # Inspección de Carpetas y Bloques locales
 @app.get("/api/folder/info")
-def get_folder_info(path: str):
+def get_folder_info(path: str, request: Request):
     try:
-        p = Path(path)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        workspace_root = get_workspace_root_for_token(token) if token else WORKSPACE_ROOT
+        fm, _, _, _ = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
+        # Validate the path is inside the user's workspace.
+        try:
+            p = fm._validate_path(path)
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
         if not p.exists():
             raise HTTPException(status_code=404, detail="La ruta especificada no existe")
-            
+
         index_path = p / "4_Doc_Obsidian_IA" / "index.md"
         if index_path.exists():
             # Retornar Bloque Info
@@ -700,12 +931,12 @@ def get_folder_info(path: str):
             title = f"{id_tag} — {p.name}" if id_tag else p.name
             raw_path = p / "1_Data_Raw"
             n_src = sum(1 for _ in raw_path.iterdir()) if raw_path.is_dir() else 0
-            
+
             COLOR_PAGE = {
                 "resumen": "#2e7d32", "entidad": "#1565c0",
                 "concepto": "#e65100", "guia": "#6a1b9a"
             }
-            
+
             pages_data = []
             for page, ptype, desc in pages:
                 pages_data.append({
@@ -714,7 +945,7 @@ def get_folder_info(path: str):
                     "desc": desc,
                     "typeColor": COLOR_PAGE.get(ptype, "#333")
                 })
-                
+
             return {
                 "type": "bloque",
                 "data": {
@@ -728,13 +959,13 @@ def get_folder_info(path: str):
         else:
             # Retornar Folder Info normal
             files = sorted(f for f in p.iterdir() if f.is_file())
-            parent_name = p.parent.name if p.parent != WORKSPACE_ROOT else "Raíz"
+            parent_name = p.parent.name if p.parent != workspace_root else "Raíz"
             items = []
             for f in files:
                 sz = _fmt_size(f.stat().st_size)
                 dt = _fmt_date(f.stat().st_mtime)
                 items.append({"name": f.name, "size": sz, "date": dt, "path": str(f)})
-                
+
             return {
                 "type": "folder",
                 "data": {
@@ -749,31 +980,34 @@ def get_folder_info(path: str):
 
 # Leer y Guardar Archivos en Base64 (para elementos binarios/imágenes)
 @app.get("/api/file/base64")
-def get_file_base64(path: str):
+def get_file_base64(path: str, request: Request):
     try:
         if "%" in path:
             path = urllib.parse.unquote(path)
         if path.startswith("file:///"):
             path = path[8:]
-        
-        base64_str = file_manager.read_binary_file_base64(path)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, _, _ = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
+        base64_str = fm.read_binary_file_base64(path)
         return {"success": True, "base64": base64_str}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/file/base64/save")
-def save_file_base64(payload: Base64SavePayload):
+def save_file_base64(payload: Base64SavePayload, request: Request):
     try:
         import base64
         binary_data = base64.b64decode(payload.base64_data)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
 
         if payload.source == "local":
-            file_manager.save_binary_file_base64(payload.path, payload.base64_data)
+            fm.save_binary_file_base64(payload.path, payload.base64_data)
             return {"success": True, "message": "Archivo binario guardado localmente"}
 
         elif payload.source == "drive":
             if payload.remote_id:
-                ok, modified_time = drive_sync.upload(payload.remote_id, binary_data, payload.mimetype)
+                ok, modified_time = dr.upload(payload.remote_id, binary_data, payload.mimetype)
                 if not ok:
                     raise HTTPException(status_code=500, detail="Error al subir cambios binarios a Google Drive")
                 return {"success": True, "modifiedTime": modified_time, "remote_id": payload.remote_id}
@@ -781,7 +1015,7 @@ def save_file_base64(payload: Base64SavePayload):
                 cfg_drive = load_config()
                 parent_id = cfg_drive.get("drive_base_folder_id", "") or "root"
                 name = Path(payload.path).name if payload.path else "imagen.png"
-                ok, fid, mtime = drive_sync.create_file(parent_id, name, binary_data, payload.mimetype)
+                ok, fid, mtime = dr.create_file(parent_id, name, binary_data, payload.mimetype)
                 if not ok:
                     raise HTTPException(status_code=500, detail="Error al crear archivo binario en Google Drive")
                 return {"success": True, "remote_id": fid, "modifiedTime": mtime}
@@ -790,20 +1024,20 @@ def save_file_base64(payload: Base64SavePayload):
             github_path = payload.remote_id or payload.path
             if not payload.remote_repo or not github_path:
                 raise HTTPException(status_code=400, detail="Faltan repositorio o ruta para GitHub")
-            
-            if not github_sync.is_authenticated:
+
+            if not gh.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub")
 
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
+            sha = payload.sha or gh.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             if sha:
-                ok = github_sync.commit(payload.remote_repo, github_path, binary_data, sha, "Upload binary via Launchpad")
+                ok = gh.commit(payload.remote_repo, github_path, binary_data, sha, "Upload binary via Launchpad")
             else:
-                ok = github_sync.create_file(payload.remote_repo, github_path, binary_data, "Upload binary via Launchpad")
-                
+                ok = gh.create_file(payload.remote_repo, github_path, binary_data, "Upload binary via Launchpad")
+
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al subir archivo binario a GitHub")
-            
-            new_sha = github_sync.get_sha(payload.remote_repo, github_path, bypass_cache=True)
+
+            new_sha = gh.get_sha(payload.remote_repo, github_path, bypass_cache=True)
             return {"success": True, "sha": new_sha}
 
         else:
@@ -816,49 +1050,52 @@ def save_file_base64(payload: Base64SavePayload):
 
 @app.get("/api/file/raw")
 def get_file_raw(
+    request: Request,
     path: str,
     source: str = "local",
     remote_repo: Optional[str] = None,
     remote_id: Optional[str] = None
 ):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
         if source == "local":
             if "%" in path:
                 path = urllib.parse.unquote(path)
             if path.startswith("file:///"):
                 path = path[8:]
-                
-            p = file_manager._validate_path(path)
+
+            p = fm._validate_path(path)
             if not p.is_file():
                 raise HTTPException(status_code=404, detail="El archivo no existe")
             file_path = p
         elif source == "github":
             if not remote_repo or not path:
                 raise HTTPException(status_code=400, detail="Faltan parámetros de repositorio/ruta para GitHub")
-            
-            if not github_sync.is_authenticated:
+
+            if not gh.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub")
-                
+
             safe_repo = remote_repo.replace("/", "_")
             safe_path = path.replace("/", "_")
             temp_path = Path(__file__).resolve().parent.parent / "_temp_files" / f"raw_github_{safe_repo}_{safe_path}"
             temp_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            ok = github_sync.download_binary(remote_repo, path, str(temp_path))
+
+            ok = gh.download_binary(remote_repo, path, str(temp_path))
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al descargar archivo binario de GitHub")
             file_path = temp_path
         elif source == "drive":
             if not remote_id:
                 raise HTTPException(status_code=400, detail="Falta remote_id para Google Drive")
-                
-            if not drive_sync.is_authenticated:
+
+            if not dr.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en Google Drive")
-                
+
             temp_path = Path(__file__).resolve().parent.parent / "_temp_files" / f"raw_drive_{remote_id}"
             temp_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            ok = drive_sync.download_binary(remote_id, str(temp_path))
+
+            ok = dr.download_binary(remote_id, str(temp_path))
             if not ok:
                 raise HTTPException(status_code=500, detail="Error al descargar archivo binario de Google Drive")
             file_path = temp_path
@@ -869,7 +1106,7 @@ def get_file_raw(
         mime_type, _ = mimetypes.guess_type(str(file_path))
         if not mime_type:
             mime_type = "application/octet-stream"
-            
+
         from fastapi.responses import FileResponse
         return FileResponse(file_path, media_type=mime_type)
     except HTTPException as he:
@@ -879,13 +1116,17 @@ def get_file_raw(
 
 # Crear Archivos/Carpetas locales
 @app.post("/api/file/create")
-def create_file_or_folder(payload: FileCreatePayload):
+def create_file_or_folder(payload: FileCreatePayload, request: Request):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, _, _ = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
         if payload.type == "file":
-            new_path = file_manager.create_new_file(payload.parent_folder, payload.name, payload.content)
+            new_path = fm.create_new_file(payload.parent_folder, payload.name, payload.content)
+            broadcaster.broadcast_sync("tree_changed", {"action": "create", "path": new_path, "item_type": "file"})
             return {"success": True, "path": new_path}
         elif payload.type == "folder":
-            new_path = file_manager.create_new_folder(payload.parent_folder, payload.name)
+            new_path = fm.create_new_folder(payload.parent_folder, payload.name)
+            broadcaster.broadcast_sync("tree_changed", {"action": "create", "path": new_path, "item_type": "folder"})
             return {"success": True, "path": new_path}
         else:
             raise HTTPException(status_code=400, detail="Tipo inválido. Debe ser 'file' o 'folder'")
@@ -896,41 +1137,43 @@ def create_file_or_folder(payload: FileCreatePayload):
 
 # Crear Archivos en la Nube (GitHub o Google Drive)
 @app.post("/api/file/create-cloud")
-def create_cloud_file(payload: FileCreateCloudPayload):
+def create_cloud_file(payload: FileCreateCloudPayload, request: Request):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        _, _, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
         parsed = _parse_cloud_path(payload.parent_folder)
         if not parsed:
             raise HTTPException(status_code=400, detail="Destino en la nube inválido")
-        
+
         service = parsed["service"]
         default_content = payload.content or f"# {payload.filename.replace('.md', '').replace('_', ' ')}\n"
-        
+
         if service == "github":
-            if not github_sync.is_authenticated:
+            if not gh.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en GitHub. Por favor, configura tu token.")
             repo = parsed["repo"]
             inner_path = parsed["path"]
             full_path = f"{inner_path}/{payload.filename}" if inner_path else payload.filename
             full_path = full_path.lstrip("/")
-            ok = github_sync.create_file(repo, full_path, default_content)
+            ok = gh.create_file(repo, full_path, default_content)
             if not ok:
                 raise HTTPException(status_code=500, detail="Error creando archivo en GitHub")
-            
+
             # Devolver repo y full_path para que el frontend pueda abrir el archivo de inmediato
             return {"success": True, "path": f"github://dir/{repo}/{full_path}", "repo": repo, "full_path": full_path}
-            
+
         elif service == "drive":
-            if not drive_sync.is_authenticated:
+            if not dr.is_authenticated:
                 raise HTTPException(status_code=401, detail="No autenticado en Google Drive")
             folder_id = parsed["folder_id"]
-            ok, fid, mtime = drive_sync.create_file(folder_id, payload.filename, default_content)
+            ok, fid, mtime = dr.create_file(folder_id, payload.filename, default_content)
             if not ok:
                 raise HTTPException(status_code=500, detail="Error creando archivo en Google Drive")
             return {"success": True, "remote_id": fid, "path": f"drive://file/{fid}"}
-            
+
         else:
             raise HTTPException(status_code=400, detail="Servicio no soportado")
-            
+
     except HTTPException as he:
         raise he
     except Exception as e:
@@ -938,79 +1181,164 @@ def create_cloud_file(payload: FileCreateCloudPayload):
 
 # Eliminar Archivos/Carpetas locales o en la nube
 @app.post("/api/file/delete")
-def delete_file_or_folder(payload: FileActionPayload):
+def delete_file_or_folder(payload: FileActionPayload, request: Request):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
         if payload.source == "local":
-            file_manager.delete_item(payload.path)
+            fm.delete_item(payload.path)
+            broadcaster.broadcast_sync("tree_changed", {"action": "delete", "path": payload.path, "source": "local"})
             return {"success": True}
         elif payload.source == "drive":
             if not payload.remote_id:
                 raise HTTPException(status_code=400, detail="Falta remote_id de Drive")
-            ok = drive_sync.delete_file(payload.remote_id)
+            ok = dr.delete_file(payload.remote_id)
+            if ok:
+                broadcaster.broadcast_sync("tree_changed", {"action": "delete", "path": payload.path or payload.remote_id, "source": "drive"})
             return {"success": ok}
         elif payload.source == "github":
             if not payload.remote_repo or not payload.path:
                 raise HTTPException(status_code=400, detail="Faltan datos de GitHub")
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path, bypass_cache=True)
-            ok = github_sync.delete_file(payload.remote_repo, payload.path, sha)
+            sha = payload.sha or gh.get_sha(payload.remote_repo, payload.path, bypass_cache=True)
+            ok = gh.delete_file(payload.remote_repo, payload.path, sha)
+            if ok:
+                broadcaster.broadcast_sync("tree_changed", {"action": "delete", "path": payload.path, "source": "github"})
             return {"success": ok}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Renombrar
 @app.post("/api/file/rename")
-def rename_file_or_folder(payload: FileRenamePayload):
+def rename_file_or_folder(payload: FileRenamePayload, request: Request):
     try:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, gh, dr = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
         if payload.source == "local":
-            new_path = file_manager.rename_item(payload.path, payload.new_name)
+            new_path = fm.rename_item(payload.path, payload.new_name)
+            broadcaster.broadcast_sync("tree_changed", {"action": "rename", "path": payload.path, "new_path": new_path, "source": "local"})
             return {"success": True, "path": new_path}
         elif payload.source == "drive":
             if not payload.remote_id:
                 raise HTTPException(status_code=400, detail="Falta remote_id")
-            ok = drive_sync.rename_file(payload.remote_id, payload.new_name)
+            ok = dr.rename_file(payload.remote_id, payload.new_name)
+            if ok:
+                broadcaster.broadcast_sync("tree_changed", {"action": "rename", "path": payload.path, "source": "drive"})
             return {"success": ok}
         elif payload.source == "github":
             if not payload.remote_repo or not payload.path:
                 raise HTTPException(status_code=400, detail="Faltan datos de GitHub")
-            sha = payload.sha or github_sync.get_sha(payload.remote_repo, payload.path, bypass_cache=True)
+            sha = payload.sha or gh.get_sha(payload.remote_repo, payload.path, bypass_cache=True)
             new_path = str(Path(payload.path).parent / payload.new_name).replace("\\", "/")
-            ok = github_sync.rename_file(payload.remote_repo, payload.path, new_path, sha)
+            ok = gh.rename_file(payload.remote_repo, payload.path, new_path, sha)
+            if ok:
+                broadcaster.broadcast_sync("tree_changed", {"action": "rename", "path": payload.path, "new_path": new_path, "source": "github"})
             return {"success": ok, "path": new_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # Mover
 @app.post("/api/file/move")
-def move_file_or_folder(payload: FileMovePayload):
+def move_file_or_folder(payload: FileMovePayload, request: Request):
     try:
-        new_path = file_manager.move_item(payload.src_path, payload.dst_folder)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        fm, _, _, _ = get_services_for_token(token) if token else (file_manager, explorer_service, github_sync, drive_sync)
+        new_path = fm.move_item(payload.src_path, payload.dst_folder)
+        broadcaster.broadcast_sync("tree_changed", {"action": "move", "path": payload.src_path, "new_path": new_path, "source": "local"})
         return {"success": True, "path": new_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============================================================
+# Server-Sent Events (SSE) – Real-Time Sync Endpoint
+# ============================================================
+
+@app.get("/api/events/stream")
+async def events_stream(request: Request):
+    """
+    SSE endpoint – each connected browser tab subscribes here.
+    The server pushes events whenever a file is saved, created,
+    deleted, renamed, or moved from any other session.
+    Auth is validated via query param ?token=<session_token> or
+    X-Session-Token header (same as other protected endpoints).
+    """
+    # Validate session token before subscribing. EventSource cannot send custom
+    # headers, so we accept the token via ?token=<hex> as well as the header.
+    token = request.headers.get("x-session-token") or request.query_params.get("token")
+    if not token or not verify_session_token(token):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Unauthorized: Invalid or missing session token"},
+        )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        q = await broadcaster.subscribe()
+        try:
+            # Send an initial heartbeat so the client knows it's connected
+            yield "event: connected\ndata: {\"status\": \"ok\"}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    payload = await asyncio.wait_for(q.get(), timeout=25.0)
+                    yield f"data: {payload}\n\n"
+                except asyncio.TimeoutError:
+                    # Send a periodic heartbeat to keep the connection alive
+                    yield "event: heartbeat\ndata: {}\n\n"
+        finally:
+            await broadcaster.unsubscribe(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Needed for nginx/Render proxies
+            "Connection": "keep-alive",
+        }
+    )
+
+
 # --- Google Drive & GitHub Conexiones ---
 
 @app.post("/api/sync/github/config")
-def config_github(payload: GithubConfigPayload):
+def config_github(payload: GithubConfigPayload, request: Request):
     try:
-        ok, err = github_sync.authenticate(payload.token)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        username = get_session_username(token) if token else None
+        if not username:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        # Per-user authenticate (this also caches under user_store)
+        user_store.set_github_token(username, payload.token)
+        gh = user_store.get_github_service_for(username)
+        # Force re-auth with the new token
+        ok, err = gh.authenticate(payload.token)
         if ok:
-            repos = github_sync.list_repos() or []
+            repos = gh.list_repos() or []
             return {"success": True, "repos": repos}
         else:
             return {"success": False, "error": err}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/sync/github/clear")
-def clear_github():
-    github_sync.clear_token()
+def clear_github(request: Request):
+    token = request.headers.get("x-session-token") or request.query_params.get("token")
+    username = get_session_username(token) if token else None
+    if username:
+        user_store.clear_github_token(username)
+        user_store.invalidate_user_cache(username)
     return {"success": True}
 
 @app.post("/api/sync/drive/clear")
-def clear_drive():
-    drive_sync.clear_token()
+def clear_drive(request: Request):
+    token = request.headers.get("x-session-token") or request.query_params.get("token")
+    username = get_session_username(token) if token else None
+    if username:
+        user_store.clear_drive_token(username)
+        user_store.invalidate_user_cache(username)
     return {"success": True}
 
 @app.post("/api/sync/active-source")
@@ -1024,17 +1352,23 @@ def set_active_source(payload: ActiveSourcePayload):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sync/github/folders")
-def get_github_folders(repo: str):
+def get_github_folders(repo: str, request: Request):
     try:
-        folders = github_sync.get_all_folders(repo)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        username = get_session_username(token) if token else None
+        gh = user_store.get_github_service_for(username) if username else github_sync
+        folders = gh.get_all_folders(repo)
         return folders
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sync/drive/folders")
-def get_drive_folders():
+def get_drive_folders(request: Request):
     try:
-        folders = drive_sync.get_all_folders()
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        username = get_session_username(token) if token else None
+        dr = user_store.get_drive_service_for(username) if username else drive_sync
+        folders = dr.get_all_folders()
         return folders
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1042,9 +1376,12 @@ def get_drive_folders():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/sync/drive/files")
-def get_drive_files(folder_id: str = "root"):
+def get_drive_files(request: Request, folder_id: str = "root"):
     try:
-        files = drive_sync.list_files(folder_id)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        username = get_session_username(token) if token else None
+        dr = user_store.get_drive_service_for(username) if username else drive_sync
+        files = dr.list_files(folder_id)
         return {"success": True, "files": files}
     except (RuntimeError, FileNotFoundError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1079,12 +1416,12 @@ def drive_auth(request: Request):
     from app.services.sync_service import CREDS_PATH, _MEMORY_CONFIG
     if not CREDS_PATH.exists():
         raise HTTPException(status_code=400, detail="No se encuentra credentials.json. Súbelo primero en la configuración.")
-    
+
     from google_auth_oauthlib.flow import Flow
     scheme = request.headers.get("x-forwarded-proto", "http")
     host = request.headers.get("host", "localhost:8000")
     redirect_uri = f"{scheme}://{host}/api/sync/drive/callback"
-    
+
     flow = Flow.from_client_secrets_file(
         str(CREDS_PATH),
         scopes=["https://www.googleapis.com/auth/drive"],
@@ -1095,10 +1432,14 @@ def drive_auth(request: Request):
         prompt="consent",
         include_granted_scopes="true"
     )
-    # Guardar el code_verifier generado en disco usando el state como clave para el callback (compatible con multi-worker)
+    # Save the code_verifier for the callback (compatible with multi-worker).
+    # Also tag the state with the username so the callback can route the
+    # resulting credentials to the right user's record.
+    sess_token = request.headers.get("x-session-token") or request.query_params.get("token")
+    username = get_session_username(sess_token) if sess_token else ""
     if hasattr(flow, "code_verifier") and flow.code_verifier:
-        save_oauth_verifier(state, flow.code_verifier)
-        
+        save_oauth_verifier(state, flow.code_verifier, username=username)
+
     from fastapi.responses import RedirectResponse
     return RedirectResponse(auth_url)
 
@@ -1115,10 +1456,13 @@ def drive_callback(request: Request, code: str, state: str = None):
     host = request.headers.get("host", "localhost:8000")
     redirect_uri = f"{scheme}://{host}/api/sync/drive/callback"
     
-    # Recuperar el code_verifier usando el parámetro state desde disco
+    # Recuperar el code_verifier (y el username asociado) usando el state
     code_verifier = None
+    oauth_username = ""
     if state:
-        code_verifier = pop_oauth_verifier(state)
+        entry = pop_oauth_verifier(state) or {}
+        code_verifier = entry.get("verifier")
+        oauth_username = entry.get("username", "")
         
     try:
         flow = Flow.from_client_secrets_file(
@@ -1129,10 +1473,22 @@ def drive_callback(request: Request, code: str, state: str = None):
         )
         flow.fetch_token(code=code)
         creds = flow.credentials
-        
-        drive_sync._creds = creds
-        drive_sync.service = build("drive", "v3", credentials=creds)
-        drive_sync._save_token()
+
+        # Persist per-user. If we know the username (from the state tag),
+        # write the creds into the user's record. Otherwise fall back to
+        # the legacy global config.json slot for backward compatibility.
+        if oauth_username:
+            try:
+                user_store.set_drive_token(oauth_username, creds)
+            except Exception:
+                # Fallback to global if per-user persistence failed.
+                drive_sync._creds = creds
+                drive_sync.service = build("drive", "v3", credentials=creds)
+                drive_sync._save_token()
+        else:
+            drive_sync._creds = creds
+            drive_sync.service = build("drive", "v3", credentials=creds)
+            drive_sync._save_token()
         
         from fastapi.responses import HTMLResponse
         html_content = """
@@ -1160,12 +1516,108 @@ def drive_callback(request: Request, code: str, state: str = None):
         return HTMLResponse(content=f"<h3>Error en la vinculación de Google Drive: {str(e)}</h3>", status_code=500)
 
 @app.get("/api/sync/github/files")
-def get_github_files(repo: str, path: str = ""):
+def get_github_files(repo: str, request: Request, path: str = ""):
     try:
-        files = github_sync.list_files(repo, path)
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        username = get_session_username(token) if token else None
+        gh = user_store.get_github_service_for(username) if username else github_sync
+        files = gh.list_files(repo, path)
         return {"success": True, "files": files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============================================================
+# Per-user workspace & integrations (Phase 2)
+# ============================================================
+
+class WorkspaceSetPayload(BaseModel):
+    workspace_root: str
+
+
+def _require_session_username(request: Request) -> str:
+    """Extract username from session token, or raise 401."""
+    token = request.headers.get("x-session-token") or request.query_params.get("token")
+    username = get_session_username(token) if token else None
+    if not username:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return username
+
+
+def _can_admin_user(target_username: str, requester_username: str) -> bool:
+    """Return True if requester is the admin or is acting on themselves."""
+    users_data = load_users()
+    admin_key = (users_data.get("admin") or "").lower()
+    return requester_username.lower() == admin_key or requester_username.lower() == target_username.lower()
+
+
+@app.get("/api/auth/users/{target_username}/workspace")
+def get_user_workspace(target_username: str, request: Request):
+    requester = _require_session_username(request)
+    if not _can_admin_user(target_username, requester):
+        raise HTTPException(status_code=403, detail="Solo el admin o el propio usuario puede ver su workspace.")
+    root = user_store.get_workspace_root(target_username)
+    return {
+        "username": target_username,
+        "workspace_root": str(root),
+        "exists": root.exists(),
+    }
+
+
+@app.put("/api/auth/users/{target_username}/workspace")
+def set_user_workspace(target_username: str, payload: WorkspaceSetPayload, request: Request):
+    requester = _require_session_username(request)
+    if not _can_admin_user(target_username, requester):
+        raise HTTPException(status_code=403, detail="Solo el admin o el propio usuario puede cambiar su workspace.")
+    try:
+        user_store.set_workspace_root(target_username, payload.workspace_root)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Invalidate caches so the next request rebuilds services with the new root.
+    user_store.invalidate_user_cache(target_username)
+    return {"success": True, "workspace_root": payload.workspace_root}
+
+
+class IntegrationsPatchPayload(BaseModel):
+    github_token: Optional[str] = None
+    clear_github: Optional[bool] = None
+    clear_drive: Optional[bool] = None
+
+
+@app.get("/api/auth/users/{target_username}/integrations")
+def get_user_integrations(target_username: str, request: Request):
+    requester = _require_session_username(request)
+    if not _can_admin_user(target_username, requester):
+        raise HTTPException(status_code=403, detail="Solo el admin o el propio usuario puede ver sus integraciones.")
+    user = user_store.get_user(target_username) or {}
+    integrations = user.get("integrations") or {}
+    # We never return the raw tokens; just booleans indicating presence.
+    return {
+        "username": target_username,
+        "github_connected": bool(integrations.get("github_token")),
+        "drive_connected": bool(integrations.get("drive_token")),
+    }
+
+
+@app.put("/api/auth/users/{target_username}/integrations")
+def set_user_integrations(target_username: str, payload: IntegrationsPatchPayload, request: Request):
+    requester = _require_session_username(request)
+    if not _can_admin_user(target_username, requester):
+        raise HTTPException(status_code=403, detail="Solo el admin o el propio usuario puede modificar sus integraciones.")
+    # Ensure the target user exists.
+    if not user_store.get_user(target_username):
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+    if payload.clear_github:
+        user_store.clear_github_token(target_username)
+    elif payload.github_token is not None:
+        user_store.set_github_token(target_username, payload.github_token)
+        # Force the cached service to re-authenticate with the new token.
+        gh = user_store.get_github_service_for(target_username)
+        gh.authenticate(payload.github_token)
+    if payload.clear_drive:
+        user_store.clear_drive_token(target_username)
+    user_store.invalidate_user_cache(target_username)
+    return {"success": True}
 
 
 # --- AI Chatbot & Copilot ---
@@ -1188,90 +1640,198 @@ def copilot_endpoint(payload: CopilotPayload):
 
 # --- Authentication Endpoints ---
 
+# Pydantic models for new auth
+class RegisterPayload(BaseModel):
+    username: str
+    password: str
+    display_name: Optional[str] = None
+
+# Run migration on import (no-op if already done)
+migrate_legacy_user()
+
 @app.get("/api/auth/status")
 def auth_status():
-    cfg = load_config()
-    username = os.environ.get("APP_USERNAME") or cfg.get("app_username", "")
-    
-    # Check if password hash is in env or config
-    pw_hash = os.environ.get("APP_PASSWORD_HASH")
-    if not pw_hash:
-        raw_pw = os.environ.get("APP_PASSWORD")
-        if raw_pw:
-            pw_hash = hash_password(raw_pw)
-        else:
-            pw_hash = cfg.get("app_password_hash", "")
-            
-    password_set = bool(pw_hash)
-    return {"success": True, "password_set": password_set, "username": username}
+    """Quick status: are there any users configured?"""
+    users_data = load_users()
+    has_users = bool(users_data.get("users"))
+    return {"success": True, "has_users": has_users, "password_set": has_users}
+
+@app.get("/api/auth/users")
+def list_users():
+    """Public endpoint — returns the list of users for the login screen (no passwords)."""
+    users_data = load_users()
+    public_users = []
+    admin_key = users_data.get("admin", "")
+    for key, user in users_data["users"].items():
+        public_users.append({
+            "username": user["username"],
+            "display_name": user.get("display_name") or user["username"],
+            "is_admin": key == admin_key,
+            "last_login": user.get("last_login")
+        })
+    return {
+        "success": True,
+        "users": public_users,
+        "has_users": len(public_users) > 0
+    }
 
 @app.get("/api/auth/verify")
 def auth_verify(request: Request):
-    token = request.headers.get("x-session-token")
+    token = request.headers.get("x-session-token") or request.query_params.get("token")
     if token and verify_session_token(token):
-        return {"success": True}
+        username = get_session_username(token)
+        users_data = load_users()
+        is_admin = username.lower() == users_data.get("admin", "").lower() if username else False
+        return {"success": True, "username": username, "is_admin": is_admin}
     raise HTTPException(status_code=401, detail="Unauthorized")
 
-@app.post("/api/auth/setup")
-def auth_setup(payload: SetupPasswordPayload):
-    cfg = load_config()
-    pw_hash = os.environ.get("APP_PASSWORD_HASH") or os.environ.get("APP_PASSWORD") or cfg.get("app_password_hash", "")
-    if pw_hash:
-        raise HTTPException(status_code=400, detail="El password ya está configurado")
-        
+@app.post("/api/auth/register")
+def auth_register(payload: RegisterPayload, request: Request):
+    """Create a new user. First user is always admin and requires no auth.
+    Subsequent users require a valid admin session token."""
+    users_data = load_users()
+    is_first_user = len(users_data["users"]) == 0
+
+    if not is_first_user:
+        token = request.headers.get("x-session-token") or request.query_params.get("token")
+        if not is_admin_token(token):
+            raise HTTPException(status_code=403, detail="Solo el administrador puede crear nuevos usuarios.")
+
     username = payload.username.strip()
-    if len(username) < 3:
-        raise HTTPException(status_code=400, detail="El usuario debe tener al menos 3 caracteres")
-        
-    password_error = validate_password_strength(payload.password)
-    if password_error:
-        raise HTTPException(status_code=400, detail=password_error)
-        
-    h = hash_password(payload.password)
-    cfg["app_username"] = username
-    cfg["app_password_hash"] = h
-    save_config(cfg)
-    
-    token = secrets.token_hex(32)
-    add_session(token, username, expires_in_seconds=86400)
-    return {"success": True, "token": token}
+    if len(username) < 2:
+        raise HTTPException(status_code=400, detail="El usuario debe tener al menos 2 caracteres.")
+
+    key = username.lower()
+    if key in users_data["users"]:
+        raise HTTPException(status_code=400, detail="El nombre de usuario ya existe.")
+
+    err = validate_password_strength(payload.password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    pw_hash = hash_password(payload.password)
+    now = datetime.utcnow().isoformat()
+    users_data["users"][key] = {
+        "username": username,
+        "display_name": payload.display_name or username,
+        "password_hash": pw_hash,
+        "created_at": now,
+        "last_login": None
+    }
+    if is_first_user:
+        users_data["admin"] = key
+
+    save_users(users_data)
+
+    session_token = secrets.token_hex(32)
+    add_session(session_token, username, expires_in_seconds=86400)
+    return {
+        "success": True,
+        "token": session_token,
+        "username": username,
+        "is_admin": is_first_user
+    }
+
+@app.delete("/api/auth/users/{target_username}")
+def delete_user(target_username: str, request: Request):
+    """Delete a user. Admin only. Cannot delete the admin account."""
+    token = request.headers.get("x-session-token") or request.query_params.get("token")
+    if not is_admin_token(token):
+        raise HTTPException(status_code=403, detail="Solo el administrador puede eliminar usuarios.")
+
+    users_data = load_users()
+    key = target_username.lower()
+
+    if key == users_data.get("admin", ""):
+        raise HTTPException(status_code=400, detail="No puedes eliminar al usuario administrador.")
+
+    if key not in users_data["users"]:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado.")
+
+    del users_data["users"][key]
+    save_users(users_data)
+    return {"success": True}
 
 @app.post("/api/auth/login")
 def auth_login(payload: LoginPayload, request: Request):
     client_ip = request.client.host if request.client else "unknown"
     username = payload.username.strip()
-    
+
     is_blocked, remaining = check_lockout(client_ip, username)
     if is_blocked:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Demasiados intentos fallidos. Bloqueado temporalmente por {remaining} segundos."
+            detail=f"Demasiados intentos fallidos. Bloqueado por {remaining} segundos."
         )
-        
-    cfg = load_config()
-    username_stored = os.environ.get("APP_USERNAME") or cfg.get("app_username", "")
-    pw_hash = os.environ.get("APP_PASSWORD_HASH")
-    if not pw_hash:
-        raw_pw = os.environ.get("APP_PASSWORD")
-        if raw_pw:
-            pw_hash = hash_password(raw_pw)
-        else:
-            pw_hash = cfg.get("app_password_hash", "")
-            
-    if not pw_hash:
-        raise HTTPException(status_code=400, detail="No hay password configurado. Realiza el setup primero.")
-        
-    username_input = username.lower()
-    if username_input != username_stored.strip().lower() or not verify_password(pw_hash, payload.password):
+
+    users_data = load_users()
+    key = username.lower()
+    user = users_data["users"].get(key)
+
+    if not user or not verify_password(user["password_hash"], payload.password):
         record_failed_login(client_ip, username)
         raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
-        
+
     reset_failed_logins(client_ip, username)
-    
+
+    # Update last_login timestamp
+    users_data["users"][key]["last_login"] = datetime.utcnow().isoformat()
+
+    # Opportunistic rehash: if stored hash uses legacy iterations, upgrade it.
+    stored_hash = users_data["users"][key].get("password_hash", "")
+    if stored_hash and not stored_hash.startswith(f"{PBKDF2_ITERATIONS}:"):
+        try:
+            users_data["users"][key]["password_hash"] = hash_password(payload.password)
+        except Exception:
+            pass  # Keep the legacy hash if rehash fails; login still succeeded.
+
+    # Auto-assign a per-user workspace_root the first time we see the user.
+    # We use the current global WORKSPACE_ROOT (or last_root in config) as
+    # the default so the migration is invisible.
+    if not users_data["users"][key].get("workspace_root"):
+        try:
+            users_data["users"][key]["workspace_root"] = str(WORKSPACE_ROOT)
+        except Exception:
+            pass
+
+    save_users(users_data)
+
+    is_admin = key == users_data.get("admin", "")
     expires_in = 30 * 24 * 3600 if payload.remember_me else 24 * 3600
+    session_token = secrets.token_hex(32)
+    add_session(session_token, user["username"], expires_in_seconds=expires_in)
+    return {
+        "success": True,
+        "token": session_token,
+        "username": user["username"],
+        "is_admin": is_admin
+    }
+
+# Backward-compat stub — redirects to register
+@app.post("/api/auth/setup")
+def auth_setup(payload: SetupPasswordPayload):
+    from fastapi.responses import JSONResponse as JR
+    users_data = load_users()
+    if users_data["users"]:
+        raise HTTPException(status_code=400, detail="Ya hay usuarios configurados. Usa /api/auth/register.")
+    username = payload.username.strip()
+    if len(username) < 2:
+        raise HTTPException(status_code=400, detail="El usuario debe tener al menos 2 caracteres.")
+    err = validate_password_strength(payload.password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    pw_hash = hash_password(payload.password)
+    now = datetime.utcnow().isoformat()
+    key = username.lower()
+    users_data["users"][key] = {
+        "username": username, "display_name": username,
+        "password_hash": pw_hash, "created_at": now, "last_login": None
+    }
+    users_data["admin"] = key
+    save_users(users_data)
     token = secrets.token_hex(32)
-    add_session(token, username_stored, expires_in_seconds=expires_in)
-    return {"success": True, "token": token}
+    add_session(token, username, expires_in_seconds=86400)
+    return {"success": True, "token": token, "username": username, "is_admin": True}
 
 @app.post("/api/auth/logout")
 def auth_logout(request: Request):
@@ -1279,3 +1839,4 @@ def auth_logout(request: Request):
     if token:
         remove_session_token(token)
     return {"success": True}
+

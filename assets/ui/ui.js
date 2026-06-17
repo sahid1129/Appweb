@@ -1,3 +1,16 @@
+// DEPRECATED: This file is not loaded by index.html. The active copy is /ui.js.
+// Kept only for reference and diffing. Do not include via <script>.
+if (typeof window !== "undefined" && !window.__APPWEB_UI_MARKER__) {
+  window.__APPWEB_UI_MARKER__ = true;
+} else if (typeof window !== "undefined") {
+  // Loaded a second time — abort to prevent double-binding of global handlers.
+  // eslint-disable-next-line no-var
+  var _dup = "Duplicate load of assets/ui/ui.js aborted.";
+  if (window.console) console.warn(_dup);
+} else {
+  // no-op in non-browser env
+}
+
 window.onerror = function(message, source, lineno, colno, error) {
   var errText = "Error JS: " + message + " (" + (source ? source.split('/').pop() : 'inline') + ":" + lineno + ")";
   console.error(errText);
@@ -4881,6 +4894,8 @@ function submitAuth() {
     })
     .then(res => {
       if (res.success && res.token) {
+        // Always store in localStorage so other tabs (same browser) share the token
+        localStorage.setItem("app_session_token", res.token);
         sessionStorage.setItem("app_session_token", res.token);
         document.getElementById("login-overlay").style.display = "none";
         if (userInput) userInput.value = "";
@@ -4889,6 +4904,8 @@ function submitAuth() {
         initTheme();
         syncConfigFromServer();
         if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+        // Start real-time sync after setup
+        if (typeof window.initRealtimeSync === "function") window.initRealtimeSync();
       } else {
         errEl.textContent = "Error en el registro del usuario.";
       }
@@ -4915,17 +4932,18 @@ function submitAuth() {
     })
     .then(res => {
       if (res.success && res.token) {
-        if (rememberInput && rememberInput.checked) {
-          localStorage.setItem("app_session_token", res.token);
-        } else {
-          sessionStorage.setItem("app_session_token", res.token);
-        }
+        // Always store in localStorage so other tabs share the session.
+        // "remember me" controls backend session duration (24h vs 30 days), not browser storage.
+        localStorage.setItem("app_session_token", res.token);
+        sessionStorage.setItem("app_session_token", res.token);
         document.getElementById("login-overlay").style.display = "none";
         if (userInput) userInput.value = "";
         pwInput.value = "";
         initTheme();
         syncConfigFromServer();
         if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+        // Start real-time sync after successful login
+        if (typeof window.initRealtimeSync === "function") window.initRealtimeSync();
       } else {
         errEl.textContent = "Error al iniciar sesión.";
       }
@@ -4963,6 +4981,8 @@ function syncConfigFromServer() {
 }
 
 function logout() {
+  // Stop real-time sync before clearing the session token
+  if (typeof window.stopRealtimeSync === "function") window.stopRealtimeSync();
   fetch(API_BASE_URL + "/api/auth/logout", { method: "POST" })
     .finally(() => {
       sessionStorage.removeItem("app_session_token");
@@ -5229,3 +5249,147 @@ window.openImageInVisualizer = function(src) {
   }
 };
 
+
+// ============================================================
+// Real-Time Sync – SSE Event Listeners & Banner Notification
+// ============================================================
+
+(function initRealtimeSyncUI() {
+  // ── Banner helper ─────────────────────────────────────────
+  function _showReloadBanner(message) {
+    var existing = document.getElementById('rt-sync-banner');
+    if (existing) existing.remove();
+
+    var banner = document.createElement('div');
+    banner.id = 'rt-sync-banner';
+    banner.style.cssText = [
+      'position:fixed',
+      'top:72px',
+      'left:50%',
+      'transform:translateX(-50%)',
+      'z-index:99999',
+      'background:linear-gradient(135deg,#1e293b,#0f172a)',
+      'color:#f1f5f9',
+      'border:1px solid #334155',
+      'border-left:4px solid #3b82f6',
+      'border-radius:12px',
+      'padding:12px 20px',
+      'display:flex',
+      'align-items:center',
+      'gap:12px',
+      'font-size:14px',
+      'box-shadow:0 8px 32px rgba(0,0,0,0.5)',
+      'backdrop-filter:blur(8px)',
+      'max-width:520px',
+      'animation:rtBannerIn 0.3s ease'
+    ].join(';');
+
+    // Inject keyframe if missing
+    if (!document.getElementById('rt-banner-style')) {
+      var style = document.createElement('style');
+      style.id = 'rt-banner-style';
+      style.textContent = '@keyframes rtBannerIn{from{opacity:0;transform:translateX(-50%) translateY(-12px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}';
+      document.head.appendChild(style);
+    }
+
+    var icon = document.createElement('span');
+    icon.textContent = '🔄';
+    icon.style.fontSize = '18px';
+
+    var text = document.createElement('span');
+    text.textContent = message;
+    text.style.flex = '1';
+
+    var btn = document.createElement('button');
+    btn.textContent = 'Recargar';
+    btn.style.cssText = [
+      'background:#3b82f6',
+      'color:#fff',
+      'border:none',
+      'border-radius:6px',
+      'padding:6px 14px',
+      'cursor:pointer',
+      'font-size:13px',
+      'font-weight:600',
+      'white-space:nowrap'
+    ].join(';');
+    btn.onclick = function () {
+      banner.remove();
+      if (typeof loadCurrentFile === 'function') loadCurrentFile();
+    };
+
+    var close = document.createElement('button');
+    close.textContent = '✕';
+    close.title = 'Descartar';
+    close.style.cssText = [
+      'background:transparent',
+      'color:#94a3b8',
+      'border:none',
+      'cursor:pointer',
+      'font-size:16px',
+      'padding:0 4px',
+      'line-height:1'
+    ].join(';');
+    close.onclick = function () { banner.remove(); };
+
+    banner.appendChild(icon);
+    banner.appendChild(text);
+    banner.appendChild(btn);
+    banner.appendChild(close);
+    document.body.appendChild(banner);
+
+    // Auto-dismiss after 12 seconds
+    setTimeout(function () { if (banner.parentNode) banner.remove(); }, 12000);
+  }
+
+  // ── Determine currently open file path ───────────────────
+  function _currentOpenPath() {
+    // Try the global state variable used across ui.js (adapt as needed)
+    if (window._currentFilePath) return window._currentFilePath;
+    if (window.currentOpenFile && window.currentOpenFile.path) return window.currentOpenFile.path;
+    if (window.appState && window.appState.currentFilePath) return window.appState.currentFilePath;
+    return null;
+  }
+
+  // ── Handle file_saved event ───────────────────────────────
+  window.addEventListener('realtime:file_saved', function (e) {
+    var detail = e.detail || {};
+    var savedPath = detail.path || '';
+    var openPath = _currentOpenPath();
+
+    console.log('[RT] file_saved event received:', detail);
+
+    // Only notify if the saved file is the one currently open
+    if (openPath && savedPath && openPath === savedPath) {
+      _showReloadBanner('📂 Este archivo fue actualizado desde otra sesión.');
+    }
+  });
+
+  // ── Handle tree_changed event ─────────────────────────────
+  window.addEventListener('realtime:tree_changed', function (e) {
+    var detail = e.detail || {};
+    console.log('[RT] tree_changed event received:', detail);
+
+    // Refresh the file explorer tree
+    if (bridge && typeof bridge.refreshTree === 'function') {
+      bridge.refreshTree();
+    }
+  });
+
+  // ── Auto-start SSE if already authenticated ───────────────
+  // This handles the case where the user refreshes the page while already logged in
+  document.addEventListener('DOMContentLoaded', function () {
+    var token = sessionStorage.getItem('app_session_token') || localStorage.getItem('app_session_token');
+    if (token && typeof window.initRealtimeSync === 'function') {
+      window.initRealtimeSync();
+    }
+  });
+
+  // If DOM is already loaded (script at end of body), start immediately
+  if (document.readyState !== 'loading') {
+    var token = sessionStorage.getItem('app_session_token') || localStorage.getItem('app_session_token');
+    if (token && typeof window.initRealtimeSync === 'function') {
+      window.initRealtimeSync();
+    }
+  }
+})();

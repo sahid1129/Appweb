@@ -1254,3 +1254,133 @@ class QWebChannelMock {
 
 // Assign mock to window
 window.QWebChannel = QWebChannelMock;
+
+// ============================================================
+// Real-Time Sync via Server-Sent Events (SSE)
+// ============================================================
+
+(function () {
+  let _sseSource = null;
+  let _sseReconnectTimer = null;
+  let _sseReconnectDelay = 2000; // Start with 2 seconds
+  const SSE_MAX_DELAY = 30000;   // Cap at 30 seconds
+  let _sseActive = false;
+
+  /**
+   * Get the current session token from storage.
+   */
+  function _getSessionToken() {
+    return sessionStorage.getItem('app_session_token') || localStorage.getItem('app_session_token') || '';
+  }
+
+  /**
+   * Update the SSE status indicator badge in the UI.
+   * @param {'connected'|'disconnected'|'reconnecting'} state
+   */
+  function _updateStatusBadge(state) {
+    const badge = document.getElementById('sse-status-badge');
+    if (!badge) return;
+    const map = {
+      connected:    { color: '#22c55e', title: 'Sincronización en tiempo real activa',       dot: '●' },
+      disconnected: { color: '#ef4444', title: 'Sin conexión de sincronización en tiempo real', dot: '●' },
+      reconnecting: { color: '#f59e0b', title: 'Reconectando sincronización…',                dot: '◌' }
+    };
+    const cfg = map[state] || map.disconnected;
+    badge.style.color = cfg.color;
+    badge.title = cfg.title;
+    badge.textContent = cfg.dot;
+  }
+
+  /**
+   * Connect to the SSE stream endpoint.
+   */
+  function _connect() {
+    if (_sseSource) {
+      _sseSource.close();
+      _sseSource = null;
+    }
+
+    const token = _getSessionToken();
+    if (!token) {
+      // No session – don't try to connect
+      _updateStatusBadge('disconnected');
+      return;
+    }
+
+    const url = `${API_BASE_URL}/api/events/stream?token=${encodeURIComponent(token)}`;
+    _sseSource = new EventSource(url);
+
+    _sseSource.onopen = function () {
+      console.log('[SSE] Real-time sync connected.');
+      _sseReconnectDelay = 2000; // Reset backoff on success
+      _updateStatusBadge('connected');
+      _sseActive = true;
+    };
+
+    _sseSource.onmessage = function (e) {
+      // Generic "data:" messages
+      try {
+        const evt = JSON.parse(e.data);
+        _handleEvent(evt);
+      } catch (_) {}
+    };
+
+    _sseSource.addEventListener('connected', function () {
+      _updateStatusBadge('connected');
+    });
+
+    _sseSource.addEventListener('heartbeat', function () {
+      // Silently confirm connection is alive
+    });
+
+    _sseSource.onerror = function () {
+      console.warn('[SSE] Connection lost. Scheduling reconnect in', _sseReconnectDelay, 'ms');
+      _sseSource.close();
+      _sseSource = null;
+      _updateStatusBadge('reconnecting');
+
+      if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
+      _sseReconnectTimer = setTimeout(function () {
+        if (_sseActive) _connect();
+      }, _sseReconnectDelay);
+
+      // Exponential backoff
+      _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, SSE_MAX_DELAY);
+    };
+  }
+
+  /**
+   * Dispatch a custom DOM event so that ui.js can listen and react.
+   */
+  function _handleEvent(evt) {
+    if (!evt || !evt.type) return;
+    if (evt.type === 'file_saved') {
+      window.dispatchEvent(new CustomEvent('realtime:file_saved', { detail: evt }));
+    } else if (evt.type === 'tree_changed') {
+      window.dispatchEvent(new CustomEvent('realtime:tree_changed', { detail: evt }));
+    }
+  }
+
+  /**
+   * Start the SSE connection. Call this after a successful login.
+   * Exposed globally as window.initRealtimeSync().
+   */
+  window.initRealtimeSync = function () {
+    _sseActive = true;
+    _connect();
+  };
+
+  /**
+   * Stop the SSE connection (e.g., on logout).
+   * Exposed globally as window.stopRealtimeSync().
+   */
+  window.stopRealtimeSync = function () {
+    _sseActive = false;
+    if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
+    if (_sseSource) {
+      _sseSource.close();
+      _sseSource = null;
+    }
+    _updateStatusBadge('disconnected');
+  };
+})();

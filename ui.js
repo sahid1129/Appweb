@@ -1,3 +1,6 @@
+// Active UI script loaded by index.html. assets/ui/ui.js is a deprecated mirror.
+window.__APPWEB_UI_MARKER__ = true;
+
 window.onerror = function(message, source, lineno, colno, error) {
   var errText = "Error JS: " + message + " (" + (source ? source.split('/').pop() : 'inline') + ":" + lineno + ")";
   console.error(errText);
@@ -1353,6 +1356,7 @@ function showSettingsDialog() {
   loadSettingsGithubSection();
   loadSettingsDriveSection();
   loadSettingsDeepseekSection();
+  loadSettingsAccountSection();
 }
 
 function closeSettingsDialog() {
@@ -1876,6 +1880,212 @@ function settingsDeepseekSave() {
       }
     });
   }
+}
+
+
+// --- Account Tab (per-user workspace + integrations) ---
+function _currentUsername() {
+  return localStorage.getItem("app_current_user") || "";
+}
+
+function _sessionHeaders() {
+  const token = sessionStorage.getItem("app_session_token")
+             || localStorage.getItem("app_session_token")
+             || "";
+  return token ? { "X-Session-Token": token, "Content-Type": "application/json" }
+               : { "Content-Type": "application/json" };
+}
+
+function _setResult(el, msg, ok) {
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = ok ? "#16a34a" : "#dc2626";
+}
+
+function loadSettingsAccountSection() {
+  const username = _currentUsername();
+  const roleEl = document.getElementById("settings-account-role");
+  const userEl = document.getElementById("settings-account-username");
+  if (userEl) userEl.textContent = username || "—";
+  if (roleEl) {
+    const isAdmin = localStorage.getItem("app_is_admin") === "1";
+    roleEl.textContent = isAdmin ? "(Administrador)" : "";
+  }
+  if (!username) return;
+
+  const headers = { "X-Session-Token": sessionStorage.getItem("app_session_token")
+                              || localStorage.getItem("app_session_token") || "" };
+
+  // Workspace
+  fetch(API_BASE_URL + "/api/auth/users/" + encodeURIComponent(username) + "/workspace",
+        { headers: headers })
+    .then(r => r.ok ? r.json() : Promise.reject(r))
+    .then(data => {
+      const pathEl = document.getElementById("settings-account-workspace-path");
+      if (pathEl) pathEl.textContent = data.workspace_root + (data.exists ? "" : "  ⚠️ (no existe)");
+    })
+    .catch(() => {});
+
+  // Integrations
+  fetch(API_BASE_URL + "/api/auth/users/" + encodeURIComponent(username) + "/integrations",
+        { headers: headers })
+    .then(r => r.ok ? r.json() : Promise.reject(r))
+    .then(data => {
+      const ghStatus = document.getElementById("settings-account-github-status");
+      const ghInput  = document.getElementById("settings-account-github-input");
+      const ghClear  = document.getElementById("settings-account-github-clear-btn");
+      if (ghStatus) {
+        ghStatus.textContent = data.github_connected
+          ? "🟢 Conectado a GitHub con tu token"
+          : "⚪ Sin token propio (usará el global del servidor)";
+        ghStatus.style.color = data.github_connected ? "#16a34a" : "var(--text-muted)";
+      }
+      if (ghInput) ghInput.value = "";
+      if (ghClear) ghClear.style.display = data.github_connected ? "" : "none";
+
+      const drStatus  = document.getElementById("settings-account-drive-status");
+      const drLink    = document.getElementById("settings-account-drive-link-btn");
+      const drUnlink  = document.getElementById("settings-account-drive-unlink-btn");
+      if (drStatus) {
+        drStatus.textContent = data.drive_connected
+          ? "🟢 Conectado a Google Drive"
+          : "⚪ No vinculado";
+        drStatus.style.color = data.drive_connected ? "#16a34a" : "var(--text-muted)";
+      }
+      if (drLink)   drLink.style.display   = data.drive_connected ? "none" : "";
+      if (drUnlink) drUnlink.style.display = data.drive_connected ? "" : "none";
+    })
+    .catch(() => {});
+}
+
+function settingsAccountSaveWorkspace() {
+  const username = _currentUsername();
+  const input = document.getElementById("settings-account-workspace-input");
+  const result = document.getElementById("settings-account-workspace-result");
+  if (!username || !input || !result) return;
+
+  const newPath = input.value.trim();
+  if (!newPath) {
+    _setResult(result, "❌ Escribe una ruta válida.", false);
+    return;
+  }
+
+  result.textContent = "⌛ Guardando...";
+  result.style.color = "var(--text-muted)";
+
+  fetch(API_BASE_URL + "/api/auth/users/" + encodeURIComponent(username) + "/workspace",
+    { method: "PUT", headers: _sessionHeaders(),
+      body: JSON.stringify({ workspace_root: newPath }) })
+    .then(r => r.json().then(body => ({ status: r.status, body })))
+    .then(({ status, body }) => {
+      if (status === 200 && body.success) {
+        _setResult(result, "✅ Carpeta actualizada. Refrescando árbol...", true);
+        input.value = "";
+        const pathEl = document.getElementById("settings-account-workspace-path");
+        if (pathEl) pathEl.textContent = body.workspace_root;
+        if (bridge && typeof bridge.refreshTree === "function") {
+          bridge.refreshTree();
+        }
+        loadSettingsRootsHistory();
+      } else {
+        _setResult(result, "❌ " + (body.detail || "Error al guardar"), false);
+      }
+    })
+    .catch(err => _setResult(result, "❌ " + err.message, false));
+}
+
+function settingsAccountSaveGithub() {
+  const username = _currentUsername();
+  const input = document.getElementById("settings-account-github-input");
+  const result = document.getElementById("settings-account-github-result");
+  if (!username || !input || !result) return;
+  const token = input.value.trim();
+  if (!token) {
+    _setResult(result, "❌ Pega un token antes de guardar.", false);
+    return;
+  }
+
+  result.textContent = "⌛ Guardando...";
+  result.style.color = "var(--text-muted)";
+
+  fetch(API_BASE_URL + "/api/auth/users/" + encodeURIComponent(username) + "/integrations",
+    { method: "PUT", headers: _sessionHeaders(),
+      body: JSON.stringify({ github_token: token }) })
+    .then(r => r.json().then(body => ({ status: r.status, body })))
+    .then(({ status, body }) => {
+      if (status === 200 && body.success) {
+        _setResult(result, "✅ Token guardado.", true);
+        input.value = "";
+        loadSettingsAccountSection();
+        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+      } else {
+        _setResult(result, "❌ " + (body.detail || "Error al guardar"), false);
+      }
+    })
+    .catch(err => _setResult(result, "❌ " + err.message, false));
+}
+
+function settingsAccountClearGithub() {
+  const username = _currentUsername();
+  const result = document.getElementById("settings-account-github-result");
+  if (!username) return;
+  if (!confirm("¿Desconectar tu token personal de GitHub?\nSe usará el token global del servidor (si existe).")) return;
+
+  fetch(API_BASE_URL + "/api/auth/users/" + encodeURIComponent(username) + "/integrations",
+    { method: "PUT", headers: _sessionHeaders(),
+      body: JSON.stringify({ clear_github: true }) })
+    .then(r => r.json().then(body => ({ status: r.status, body })))
+    .then(({ status, body }) => {
+      if (status === 200 && body.success) {
+        _setResult(result, "✅ Token eliminado.", true);
+        loadSettingsAccountSection();
+        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+      } else {
+        _setResult(result, "❌ " + (body.detail || "Error"), false);
+      }
+    })
+    .catch(err => _setResult(result, "❌ " + err.message, false));
+}
+
+function settingsAccountLinkDrive() {
+  const result = document.getElementById("settings-account-drive-result");
+  // The OAuth flow redirects the browser; the server will route the
+  // resulting credentials to *this* user because the X-Session-Token
+  // is forwarded by api_bridge.js? No — for the redirect we need to
+  // bake the session token into the URL. Send the token as a query
+  // param so the server's drive_auth endpoint can pick it up.
+  const token = sessionStorage.getItem("app_session_token")
+             || localStorage.getItem("app_session_token") || "";
+  if (!token) {
+    _setResult(result, "❌ No hay sesión activa.", false);
+    return;
+  }
+  _setResult(result, "⌛ Abriendo Google…", true);
+  // Open in same tab so the callback can return the user here.
+  window.location.href = API_BASE_URL + "/api/sync/drive/auth?token="
+                       + encodeURIComponent(token);
+}
+
+function settingsAccountUnlinkDrive() {
+  const username = _currentUsername();
+  const result = document.getElementById("settings-account-drive-result");
+  if (!username) return;
+  if (!confirm("¿Desconectar tu cuenta de Google Drive?")) return;
+
+  fetch(API_BASE_URL + "/api/auth/users/" + encodeURIComponent(username) + "/integrations",
+    { method: "PUT", headers: _sessionHeaders(),
+      body: JSON.stringify({ clear_drive: true }) })
+    .then(r => r.json().then(body => ({ status: r.status, body })))
+    .then(({ status, body }) => {
+      if (status === 200 && body.success) {
+        _setResult(result, "✅ Google Drive desconectado.", true);
+        loadSettingsAccountSection();
+        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
+      } else {
+        _setResult(result, "❌ " + (body.detail || "Error"), false);
+      }
+    })
+    .catch(err => _setResult(result, "❌ " + err.message, false));
 }
 
 
@@ -4731,211 +4941,241 @@ function updateWordCount() {
   }
 }
 
-/* ========== AUTHENTICATION SYSTEM ========== */
-window._authMode = "login";
-window._configuredUsername = "";
+/* ========== AUTHENTICATION SYSTEM – Multi-User ========== */
+
+// State
+window._loginSelectedUser = null;
+window._loginUsers = [];
+
+// Avatar color palette (deterministic per username)
+var _avatarPalettes = [
+  ['#6366f1','#4f46e5'], ['#8b5cf6','#7c3aed'], ['#ec4899','#db2777'],
+  ['#14b8a6','#0d9488'], ['#f59e0b','#d97706'], ['#ef4444','#dc2626'],
+  ['#3b82f6','#2563eb'], ['#10b981','#059669'], ['#f97316','#ea580c'],
+  ['#06b6d4','#0891b2']
+];
+function _avatarGradient(username) {
+  var idx = 0;
+  for (var i = 0; i < username.length; i++) idx += username.charCodeAt(i);
+  var p = _avatarPalettes[idx % _avatarPalettes.length];
+  return 'linear-gradient(135deg,' + p[0] + ',' + p[1] + ')';
+}
+function _avatarInitials(name) {
+  var parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return name.slice(0, 2).toUpperCase();
+}
+
+function _loginShowPhase(phaseId) {
+  ['login-phase-users','login-phase-password','login-phase-setup'].forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = (id === phaseId) ? 'flex' : 'none';
+  });
+}
+
+function _renderUserCards(users) {
+  var grid = document.getElementById('login-users-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  if (!users || users.length === 0) {
+    grid.innerHTML = '<p style="color:rgba(255,255,255,0.35);font-size:13px;margin:0">No hay usuarios registrados.</p>';
+    return;
+  }
+  users.forEach(function(u) {
+    var card = document.createElement('div');
+    card.className = 'login-user-card';
+    card.onclick = function() { loginSelectUser(u); };
+
+    var avatar = document.createElement('div');
+    avatar.className = 'login-user-avatar';
+    avatar.style.background = _avatarGradient(u.username);
+    avatar.textContent = _avatarInitials(u.display_name || u.username);
+
+    var name = document.createElement('div');
+    name.className = 'login-user-card-name';
+    name.textContent = u.display_name || u.username;
+
+    card.appendChild(avatar);
+    card.appendChild(name);
+
+    if (u.is_admin) {
+      var badge = document.createElement('span');
+      badge.className = 'login-user-card-role';
+      badge.textContent = 'Admin';
+      card.appendChild(badge);
+    }
+    grid.appendChild(card);
+  });
+}
 
 function checkAuthStatus() {
-  fetch(API_BASE_URL + "/api/auth/status")
-    .then(r => r.json())
-    .then(data => {
-      var overlay = document.getElementById("login-overlay");
+  fetch(API_BASE_URL + '/api/auth/users')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var overlay = document.getElementById('login-overlay');
       if (!overlay) return;
-      
-      var userInput = document.getElementById("login-username-input");
-      var profileEl = document.getElementById("login-user-profile");
-      var profileUserEl = document.getElementById("login-profile-username");
-      
-      if (!data.password_set) {
-        overlay.style.display = "flex";
-        document.getElementById("login-title").textContent = "Crear Usuario y Contraseña";
-        document.getElementById("login-desc").textContent = "Define un nombre de usuario y una contraseña de al menos 6 caracteres para proteger tus notas.";
-        if (userInput) {
-          userInput.style.display = "block";
-          userInput.placeholder = "Crear usuario...";
-        }
-        if (profileEl) profileEl.style.display = "none";
-        document.getElementById("login-confirm-password-input").style.display = "block";
-        document.getElementById("login-remember-container").style.display = "none";
-        document.getElementById("login-submit-btn").textContent = "Guardar y Entrar";
-        window._authMode = "setup";
-      } else {
-        window._configuredUsername = data.username || "";
-        const sessionToken = sessionStorage.getItem("app_session_token") || localStorage.getItem("app_session_token");
-        if (sessionToken) {
-          fetch(API_BASE_URL + "/api/auth/verify")
-            .then(r => {
-              if (r.status === 200) {
-                overlay.style.display = "none";
-                initTheme();
-                syncConfigFromServer();
-              } else {
-                showLoginOverlay();
-              }
-            })
-            .catch(() => {
+
+      if (!data.has_users) {
+        overlay.style.display = 'flex';
+        _loginShowPhase('login-phase-setup');
+        var inp = document.getElementById('setup-username-input');
+        if (inp) setTimeout(function() { inp.focus(); }, 100);
+        return;
+      }
+
+      window._loginUsers = data.users || [];
+      var token = sessionStorage.getItem('app_session_token') || localStorage.getItem('app_session_token');
+      if (token) {
+        fetch(API_BASE_URL + '/api/auth/verify')
+          .then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(res) {
+            if (res && res.success) {
+              _onLoginSuccess(token, res.username, res.is_admin);
+            } else {
               showLoginOverlay();
-            });
-        } else {
-          showLoginOverlay();
-        }
+            }
+          })
+          .catch(function() { showLoginOverlay(); });
+      } else {
+        showLoginOverlay();
       }
     })
-    .catch(err => {
-      console.error("Error checking auth status:", err);
-    });
+    .catch(function(err) { console.error('checkAuthStatus error:', err); });
 }
 
 function showLoginOverlay() {
-  var overlay = document.getElementById("login-overlay");
+  var overlay = document.getElementById('login-overlay');
   if (!overlay) return;
-  overlay.style.display = "flex";
-  document.getElementById("login-title").textContent = "Iniciar Sesión";
-  document.getElementById("login-desc").textContent = "Ingresa la contraseña para acceder a tus notas.";
-  
-  var userInput = document.getElementById("login-username-input");
-  var profileEl = document.getElementById("login-user-profile");
-  var profileUserEl = document.getElementById("login-profile-username");
-  
-  if (profileEl && profileUserEl && window._configuredUsername) {
-    profileUserEl.textContent = window._configuredUsername;
-    profileEl.style.display = "flex";
-    if (userInput) userInput.style.display = "none";
-  } else {
-    if (profileEl) profileEl.style.display = "none";
-    if (userInput) {
-      userInput.style.display = "block";
-      userInput.placeholder = "Usuario...";
-    }
-  }
-  
-  document.getElementById("login-confirm-password-input").style.display = "none";
-  document.getElementById("login-remember-container").style.display = "flex";
-  document.getElementById("login-submit-btn").textContent = "Entrar";
-  window._authMode = "login";
+  overlay.style.display = 'flex';
+  _loginShowPhase('login-phase-users');
+  _renderUserCards(window._loginUsers);
 }
 
-function handleLoginKeydown(event) {
-  if (event.key === "Enter") {
-    submitAuth();
-  }
+function loginSelectUser(user) {
+  window._loginSelectedUser = user;
+  var av = document.getElementById('login-sel-avatar');
+  if (av) { av.style.background = _avatarGradient(user.username); av.textContent = _avatarInitials(user.display_name || user.username); }
+  var nm = document.getElementById('login-sel-name');
+  if (nm) nm.textContent = user.display_name || user.username;
+  var rl = document.getElementById('login-sel-role');
+  if (rl) rl.textContent = user.is_admin ? 'Administrador' : '';
+  var err = document.getElementById('login-error');
+  if (err) err.textContent = '';
+  var pw = document.getElementById('login-password-input');
+  if (pw) { pw.value = ''; setTimeout(function() { pw.focus(); }, 80); }
+  _loginShowPhase('login-phase-password');
 }
 
-function submitAuth() {
-  var userInput = document.getElementById("login-username-input");
-  var pwInput = document.getElementById("login-password-input");
-  var confirmInput = document.getElementById("login-confirm-password-input");
-  var rememberInput = document.getElementById("login-remember-me");
-  var errEl = document.getElementById("login-error");
-  
-  if (!pwInput || !errEl) return;
-  errEl.textContent = "";
-  
-  var username = "";
-  if (window._authMode === "login" && window._configuredUsername) {
-    username = window._configuredUsername;
-  } else {
-    username = userInput ? userInput.value.trim() : "";
-  }
-  
+function loginGoBack() {
+  var err = document.getElementById('login-error');
+  if (err) err.textContent = '';
+  window._loginSelectedUser = null;
+  _loginShowPhase('login-phase-users');
+}
+
+function submitLogin() {
+  var user = window._loginSelectedUser;
+  var pwInput = document.getElementById('login-password-input');
+  var remem = document.getElementById('login-remember-me');
+  var errEl = document.getElementById('login-error');
+  if (!user || !pwInput || !errEl) return;
+  errEl.textContent = '';
   var password = pwInput.value;
-  
-  if (!username) {
-    errEl.textContent = "El usuario no puede estar vacío.";
-    return;
-  }
-  if (window._authMode === "setup" && username.length < 3) {
-    errEl.textContent = "El usuario debe tener al menos 3 caracteres.";
-    return;
-  }
-  if (!password) {
-    errEl.textContent = "La contraseña no puede estar vacía.";
-    return;
-  }
-  
-  if (window._authMode === "setup") {
-    var confirmPw = confirmInput ? confirmInput.value : "";
-    if (password.length < 8) {
-      errEl.textContent = "La contraseña debe tener al menos 8 caracteres.";
-      return;
-    }
-    if (!/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) {
-      errEl.textContent = "La contraseña debe contener mayúsculas, minúsculas y números.";
-      return;
-    }
-    if (password !== confirmPw) {
-      errEl.textContent = "Las contraseñas no coinciden.";
-      return;
-    }
-    
-    fetch(API_BASE_URL + "/api/auth/setup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: username, password: password })
-    })
-    .then(r => {
-      if (r.status === 200) return r.json();
-      return r.json().then(errData => {
-        throw new Error(errData.detail || "Error en el registro del usuario.");
-      });
-    })
-    .then(res => {
-      if (res.success && res.token) {
-        sessionStorage.setItem("app_session_token", res.token);
-        document.getElementById("login-overlay").style.display = "none";
-        if (userInput) userInput.value = "";
-        pwInput.value = "";
-        if (confirmInput) confirmInput.value = "";
-        initTheme();
-        syncConfigFromServer();
-        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
-      } else {
-        errEl.textContent = "Error en el registro del usuario.";
-      }
-    })
-    .catch(err => {
-      errEl.textContent = err.message;
-    });
-    
-  } else {
-    fetch(API_BASE_URL + "/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        username: username, 
-        password: password,
-        remember_me: rememberInput ? rememberInput.checked : false
-      })
-    })
-    .then(r => {
-      if (r.status === 200) return r.json();
-      return r.json().then(errData => {
-        throw new Error(errData.detail || "Error al iniciar sesión");
-      });
-    })
-    .then(res => {
-      if (res.success && res.token) {
-        if (rememberInput && rememberInput.checked) {
-          localStorage.setItem("app_session_token", res.token);
-        } else {
-          sessionStorage.setItem("app_session_token", res.token);
-        }
-        document.getElementById("login-overlay").style.display = "none";
-        if (userInput) userInput.value = "";
-        pwInput.value = "";
-        initTheme();
-        syncConfigFromServer();
-        if (bridge && typeof bridge.refreshTree === "function") bridge.refreshTree();
-      } else {
-        errEl.textContent = "Error al iniciar sesión.";
-      }
-    })
-    .catch(err => {
-      errEl.textContent = err.message;
-    });
-  }
+  if (!password) { errEl.textContent = 'La contrasena no puede estar vacia.'; return; }
+
+  fetch(API_BASE_URL + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: user.username, password: password, remember_me: remem ? remem.checked : false })
+  })
+  .then(function(r) {
+    if (r.ok) return r.json();
+    return r.json().then(function(d) { throw new Error(d.detail || 'Error al iniciar sesion'); });
+  })
+  .then(function(res) {
+    if (res.success && res.token) { pwInput.value = ''; _onLoginSuccess(res.token, res.username, res.is_admin); }
+    else { errEl.textContent = 'Error al iniciar sesion.'; }
+  })
+  .catch(function(err) { errEl.textContent = err.message; });
 }
 
+function submitSetup() {
+  var unInput = document.getElementById('setup-username-input');
+  var pwInput = document.getElementById('setup-password-input');
+  var errEl = document.getElementById('setup-error');
+  if (!unInput || !pwInput || !errEl) return;
+  errEl.textContent = '';
+  var username = unInput.value.trim();
+  var password = pwInput.value;
+  if (username.length < 2) { errEl.textContent = 'El usuario debe tener al menos 2 caracteres.'; return; }
+  if (password.length < 4) { errEl.textContent = 'La contrasena debe tener al menos 4 caracteres.'; return; }
+
+  fetch(API_BASE_URL + '/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: username, password: password })
+  })
+  .then(function(r) {
+    if (r.ok) return r.json();
+    return r.json().then(function(d) { throw new Error(d.detail || 'Error al crear la cuenta'); });
+  })
+  .then(function(res) {
+    if (res.success && res.token) { unInput.value = ''; pwInput.value = ''; _onLoginSuccess(res.token, res.username, res.is_admin); }
+    else { errEl.textContent = 'Error al crear la cuenta.'; }
+  })
+  .catch(function(err) { errEl.textContent = err.message; });
+}
+
+function _onLoginSuccess(token, username, isAdmin) {
+  localStorage.setItem('app_session_token', token);
+  sessionStorage.setItem('app_session_token', token);
+  localStorage.setItem('app_current_user', username || '');
+  localStorage.setItem('app_is_admin', isAdmin ? '1' : '0');
+  var overlay = document.getElementById('login-overlay');
+  if (overlay) overlay.style.display = 'none';
+  _updateAdminBadge(isAdmin);
+  _applyAdminGating(isAdmin);
+  initTheme();
+  syncConfigFromServer();
+  if (bridge && typeof bridge.refreshTree === 'function') bridge.refreshTree();
+  if (typeof window.initRealtimeSync === 'function') window.initRealtimeSync();
+}
+
+function _updateAdminBadge(isAdmin) {
+  var badge = document.getElementById('admin-badge');
+  if (badge) badge.style.display = isAdmin ? 'inline-block' : 'none';
+}
+
+function _applyAdminGating(isAdmin) {
+  var settingsBtn = document.querySelector('button[onclick="showSettingsDialog()"]');
+  if (settingsBtn) settingsBtn.style.display = isAdmin ? '' : 'none';
+}
+
+function adminAddUser(username, password, callback) {
+  var token = localStorage.getItem('app_session_token');
+  fetch(API_BASE_URL + '/api/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-session-token': token },
+    body: JSON.stringify({ username: username, password: password })
+  })
+  .then(function(r) { if (r.ok) return r.json(); return r.json().then(function(d) { throw new Error(d.detail||'Error'); }); })
+  .then(function(res) { if (callback) callback(null, res); })
+  .catch(function(err) { if (callback) callback(err.message); });
+}
+
+function adminDeleteUser(username, callback) {
+  var token = localStorage.getItem('app_session_token');
+  fetch(API_BASE_URL + '/api/auth/users/' + encodeURIComponent(username), {
+    method: 'DELETE', headers: { 'x-session-token': token }
+  })
+  .then(function(r) { if (r.ok) return r.json(); return r.json().then(function(d) { throw new Error(d.detail||'Error'); }); })
+  .then(function(res) { if (callback) callback(null, res); })
+  .catch(function(err) { if (callback) callback(err.message); });
+}
+
+// Legacy compat stubs
+function submitAuth() {}
+function handleLoginKeydown(e) { if (e.key === 'Enter') submitLogin(); }
 function syncConfigFromServer() {
   fetch(API_BASE_URL + "/api/config")
     .then(r => {
@@ -4949,20 +5189,15 @@ function syncConfigFromServer() {
         if (cfg.gemini_api_key) localStorage.setItem("gemini_api_key", cfg.gemini_api_key);
         if (cfg.gemini_model) localStorage.setItem("gemini_model", cfg.gemini_model);
         if (cfg.active_ai_provider) localStorage.setItem("active_ai_provider", cfg.active_ai_provider);
-        
-        if (window.appConfig) {
-          window.appConfig.github_token = cfg.github_token || window.appConfig.github_token || "";
-          window.appConfig.deepseek_api_key = cfg.deepseek_api_key || window.appConfig.deepseek_api_key || "";
-          window.appConfig.gemini_api_key = cfg.gemini_api_key || window.appConfig.gemini_api_key || "";
-          window.appConfig.gemini_model = cfg.gemini_model || window.appConfig.gemini_model || "";
-          window.appConfig.active_ai_provider = cfg.active_ai_provider || window.appConfig.active_ai_provider || "";
-        }
       }
+      showLoginOverlay();
     })
     .catch(err => console.error("Error sincronizando config desde el servidor:", err));
 }
 
 function logout() {
+  // Stop real-time sync before clearing the session token
+  if (typeof window.stopRealtimeSync === "function") window.stopRealtimeSync();
   fetch(API_BASE_URL + "/api/auth/logout", { method: "POST" })
     .finally(() => {
       sessionStorage.removeItem("app_session_token");
@@ -5229,3 +5464,147 @@ window.openImageInVisualizer = function(src) {
   }
 };
 
+
+// ============================================================
+// Real-Time Sync – SSE Event Listeners & Banner Notification
+// ============================================================
+
+(function initRealtimeSyncUI() {
+  // ── Banner helper ─────────────────────────────────────────
+  function _showReloadBanner(message) {
+    var existing = document.getElementById('rt-sync-banner');
+    if (existing) existing.remove();
+
+    var banner = document.createElement('div');
+    banner.id = 'rt-sync-banner';
+    banner.style.cssText = [
+      'position:fixed',
+      'top:72px',
+      'left:50%',
+      'transform:translateX(-50%)',
+      'z-index:99999',
+      'background:linear-gradient(135deg,#1e293b,#0f172a)',
+      'color:#f1f5f9',
+      'border:1px solid #334155',
+      'border-left:4px solid #3b82f6',
+      'border-radius:12px',
+      'padding:12px 20px',
+      'display:flex',
+      'align-items:center',
+      'gap:12px',
+      'font-size:14px',
+      'box-shadow:0 8px 32px rgba(0,0,0,0.5)',
+      'backdrop-filter:blur(8px)',
+      'max-width:520px',
+      'animation:rtBannerIn 0.3s ease'
+    ].join(';');
+
+    // Inject keyframe if missing
+    if (!document.getElementById('rt-banner-style')) {
+      var style = document.createElement('style');
+      style.id = 'rt-banner-style';
+      style.textContent = '@keyframes rtBannerIn{from{opacity:0;transform:translateX(-50%) translateY(-12px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}';
+      document.head.appendChild(style);
+    }
+
+    var icon = document.createElement('span');
+    icon.textContent = '🔄';
+    icon.style.fontSize = '18px';
+
+    var text = document.createElement('span');
+    text.textContent = message;
+    text.style.flex = '1';
+
+    var btn = document.createElement('button');
+    btn.textContent = 'Recargar';
+    btn.style.cssText = [
+      'background:#3b82f6',
+      'color:#fff',
+      'border:none',
+      'border-radius:6px',
+      'padding:6px 14px',
+      'cursor:pointer',
+      'font-size:13px',
+      'font-weight:600',
+      'white-space:nowrap'
+    ].join(';');
+    btn.onclick = function () {
+      banner.remove();
+      if (typeof loadCurrentFile === 'function') loadCurrentFile();
+    };
+
+    var close = document.createElement('button');
+    close.textContent = '✕';
+    close.title = 'Descartar';
+    close.style.cssText = [
+      'background:transparent',
+      'color:#94a3b8',
+      'border:none',
+      'cursor:pointer',
+      'font-size:16px',
+      'padding:0 4px',
+      'line-height:1'
+    ].join(';');
+    close.onclick = function () { banner.remove(); };
+
+    banner.appendChild(icon);
+    banner.appendChild(text);
+    banner.appendChild(btn);
+    banner.appendChild(close);
+    document.body.appendChild(banner);
+
+    // Auto-dismiss after 12 seconds
+    setTimeout(function () { if (banner.parentNode) banner.remove(); }, 12000);
+  }
+
+  // ── Determine currently open file path ───────────────────
+  function _currentOpenPath() {
+    // Try the global state variable used across ui.js (adapt as needed)
+    if (window._currentFilePath) return window._currentFilePath;
+    if (window.currentOpenFile && window.currentOpenFile.path) return window.currentOpenFile.path;
+    if (window.appState && window.appState.currentFilePath) return window.appState.currentFilePath;
+    return null;
+  }
+
+  // ── Handle file_saved event ───────────────────────────────
+  window.addEventListener('realtime:file_saved', function (e) {
+    var detail = e.detail || {};
+    var savedPath = detail.path || '';
+    var openPath = _currentOpenPath();
+
+    console.log('[RT] file_saved event received:', detail);
+
+    // Only notify if the saved file is the one currently open
+    if (openPath && savedPath && openPath === savedPath) {
+      _showReloadBanner('📂 Este archivo fue actualizado desde otra sesión.');
+    }
+  });
+
+  // ── Handle tree_changed event ─────────────────────────────
+  window.addEventListener('realtime:tree_changed', function (e) {
+    var detail = e.detail || {};
+    console.log('[RT] tree_changed event received:', detail);
+
+    // Refresh the file explorer tree
+    if (bridge && typeof bridge.refreshTree === 'function') {
+      bridge.refreshTree();
+    }
+  });
+
+  // ── Auto-start SSE if already authenticated ───────────────
+  // This handles the case where the user refreshes the page while already logged in
+  document.addEventListener('DOMContentLoaded', function () {
+    var token = sessionStorage.getItem('app_session_token') || localStorage.getItem('app_session_token');
+    if (token && typeof window.initRealtimeSync === 'function') {
+      window.initRealtimeSync();
+    }
+  });
+
+  // If DOM is already loaded (script at end of body), start immediately
+  if (document.readyState !== 'loading') {
+    var token = sessionStorage.getItem('app_session_token') || localStorage.getItem('app_session_token');
+    if (token && typeof window.initRealtimeSync === 'function') {
+      window.initRealtimeSync();
+    }
+  }
+})();
