@@ -5,3 +5,4 @@ PyGithub>=2.0
 requests>=2.0
 fastapi>=0.100.0
 uvicorn>=0.22.0
+sse-starlette>=1.6.1
