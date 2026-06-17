@@ -1265,6 +1265,20 @@ window.QWebChannel = QWebChannelMock;
   let _sseReconnectDelay = 2000; // Start with 2 seconds
   const SSE_MAX_DELAY = 30000;   // Cap at 30 seconds
   let _sseActive = false;
+  let _sseAuthFailures = 0;      // Consecutive 401s — gives up after threshold
+  const SSE_MAX_AUTH_FAILURES = 3;
+
+  function _teardownSse() {
+    _sseActive = false;
+    if (_sseReconnectTimer) {
+      clearTimeout(_sseReconnectTimer);
+      _sseReconnectTimer = null;
+    }
+    if (_sseSource) {
+      _sseSource.close();
+      _sseSource = null;
+    }
+  }
 
   /**
    * Get the current session token from storage.
@@ -1299,6 +1313,7 @@ window.QWebChannel = QWebChannelMock;
       _sseSource.close();
       _sseSource = null;
     }
+    _sseAuthFailures = 0; // Fresh start for each connection attempt.
 
     const token = _getSessionToken();
     if (!token) {
@@ -1313,6 +1328,7 @@ window.QWebChannel = QWebChannelMock;
     _sseSource.onopen = function () {
       console.log('[SSE] Real-time sync connected.');
       _sseReconnectDelay = 2000; // Reset backoff on success
+      _sseAuthFailures = 0;      // Reset auth-failure counter on success
       _updateStatusBadge('connected');
       _sseActive = true;
     };
@@ -1334,9 +1350,41 @@ window.QWebChannel = QWebChannelMock;
     });
 
     _sseSource.onerror = function () {
+      // EventSource does not expose the HTTP status code directly. We use
+      // readyState to distinguish: 0 = CONNECTING, 1 = OPEN, 2 = CLOSED.
+      // A 401 from the backend closes the stream with readyState=2 and
+      // no "open" event, so we count consecutive failures and give up
+      // after SSE_MAX_AUTH_FAILURES to avoid hammering the server with
+      // an invalid token.
+      const wasOpen = (_sseSource && _sseSource.readyState === 2);
+      if (wasOpen) {
+        _sseAuthFailures += 1;
+        console.warn('[SSE] Auth failure', _sseAuthFailures, '/', SSE_MAX_AUTH_FAILURES);
+        if (_sseAuthFailures >= SSE_MAX_AUTH_FAILURES) {
+          console.warn('[SSE] Giving up after repeated 401. The session token is invalid or the server was redeployed. Showing login overlay.');
+          _teardownSse();
+          _updateStatusBadge('disconnected');
+          // Drop the bad token so the user is forced to re-authenticate.
+          sessionStorage.removeItem('app_session_token');
+          localStorage.removeItem('app_session_token');
+          if (typeof showLoginOverlay === 'function') {
+            showLoginOverlay();
+          } else {
+            var overlay = document.getElementById('login-overlay');
+            if (overlay) overlay.style.display = 'flex';
+          }
+          return;
+        }
+      } else {
+        // Network blip — reset the auth-failure counter.
+        _sseAuthFailures = 0;
+      }
+
       console.warn('[SSE] Connection lost. Scheduling reconnect in', _sseReconnectDelay, 'ms');
-      _sseSource.close();
-      _sseSource = null;
+      if (_sseSource) {
+        _sseSource.close();
+        _sseSource = null;
+      }
       _updateStatusBadge('reconnecting');
 
       if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
