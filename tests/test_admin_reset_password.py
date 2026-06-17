@@ -207,5 +207,123 @@ class AdminKeyRateLimitTest(unittest.TestCase):
         self.assertEqual(r.status_code, 429)
 
 
+class AdminWipeUsersTest(unittest.TestCase):
+    """Wipe all users via master key.
+
+    This is the nuclear recovery path: when the operator has lost
+    track of every account (e.g. wiped persistent disk + lost
+    BOOTSTRAP_ADMIN_PASSWORD), they can call /api/auth/admin/wipe-users
+    to delete the entire user store. The next /api/auth/status call
+    re-runs the bootstrap and recreates _admin with the default
+    password.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = Server()
+        cls.server.start(admin_key=ADMIN_KEY)
+        cls.base = cls.server.base
+        # Provision two users.
+        _register(cls.base, "_adm", "oldpass")
+        lr = _login(cls.base, "_adm", "oldpass")
+        admin_token = lr.json()["token"]
+        _register(cls.base, "_user1", "userpw", token=admin_token)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.stop()
+
+    def test_wipe_requires_master_key(self):
+        r = requests.post(
+            f"{self.base}/api/auth/admin/wipe-users", timeout=10,
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_wipe_rejects_wrong_key(self):
+        r = requests.post(
+            f"{self.base}/api/auth/admin/wipe-users", timeout=10,
+            headers={"X-Admin-Key": "wrong"},
+        )
+        self.assertEqual(r.status_code, 403)
+
+    def test_wipe_deletes_all_users(self):
+        # Self-contained: re-create the fixtures in case earlier
+        # tests in this class already wiped them. This avoids the
+        # alphabetical-order trap.
+        _register(self.base, "_seed1", "seed1pw")
+        lr = _login(self.base, "_seed1", "seed1pw")
+        seed_token = lr.json()["token"]
+        _register(self.base, "_seed2", "seed2pw", token=seed_token)
+
+        # Sanity: 2 users
+        r = requests.get(f"{self.base}/api/auth/users", timeout=5)
+        self.assertEqual(len(r.json()["users"]), 2)
+
+        r = requests.post(
+            f"{self.base}/api/auth/admin/wipe-users", timeout=10,
+            headers={"X-Admin-Key": ADMIN_KEY},
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        body = r.json()
+        self.assertTrue(body["success"])
+        self.assertEqual(body["deleted_users"], 2)
+
+        # The user list is now empty.
+        r = requests.get(f"{self.base}/api/auth/users", timeout=5)
+        self.assertEqual(r.json()["users"], [])
+
+    def test_wipe_clears_sessions_and_failed_logins(self):
+        # Self-contained: re-create the fixtures.
+        _register(self.base, "_seed1", "seed1pw")
+        lr = _login(self.base, "_seed1", "seed1pw")
+        # Generate a few failed-login records so the cleanup path is
+        # actually exercised.
+        for _ in range(3):
+            requests.post(
+                f"{self.base}/api/auth/login", timeout=5,
+                headers={"Content-Type": "application/json"},
+                data=json.dumps({"username": "_seed1", "password": "WRONG"}),
+            )
+
+        # Wipe.
+        r = requests.post(
+            f"{self.base}/api/auth/admin/wipe-users", timeout=10,
+            headers={"X-Admin-Key": ADMIN_KEY},
+        )
+        self.assertEqual(r.status_code, 200)
+
+        # The session tokens file should be gone (or empty).
+        sessions_path = REPO_ROOT / ".session_tokens.json"
+        failed_path = REPO_ROOT / ".failed_logins.json"
+        if sessions_path.exists():
+            data = json.loads(sessions_path.read_text("utf-8") or "{}")
+            self.assertEqual(data.get("tokens", {}), {})
+        if failed_path.exists():
+            data = json.loads(failed_path.read_text("utf-8") or "{}")
+            self.assertEqual(data, {})
+
+
+class AdminWipeDisabledTest(unittest.TestCase):
+    """Without RENDER_ADMIN_KEY the wipe endpoint is hidden."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = Server()
+        cls.server.start()  # no admin_key
+        cls.base = cls.server.base
+        _register(cls.base, "_adm", "oldpass")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.stop()
+
+    def test_wipe_returns_404_when_feature_disabled(self):
+        r = requests.post(
+            f"{self.base}/api/auth/admin/wipe-users", timeout=10,
+            headers={"X-Admin-Key": "anything"},
+        )
+        self.assertEqual(r.status_code, 404)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

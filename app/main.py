@@ -404,7 +404,7 @@ async def dynamic_auth_middleware(request: Request, call_next):
         else:
             pw_hash = cfg.get("app_password_hash", "")
     
-    PUBLIC_PATHS = {"/api/auth/status", "/api/auth/login", "/api/auth/users", "/api/auth/register", "/api/auth/admin/reset-password", "/api/sync/drive/callback"}
+    PUBLIC_PATHS = {"/api/auth/status", "/api/auth/login", "/api/auth/users", "/api/auth/register", "/api/auth/admin/reset-password", "/api/auth/admin/wipe-users", "/api/sync/drive/callback"}
     if path.startswith("/api/") and path not in PUBLIC_PATHS:
         users_data = load_users()
         has_any_user = bool(users_data.get("users"))
@@ -1808,6 +1808,61 @@ def admin_reset_password(payload: AdminResetPasswordPayload, request: Request):
     return {
         "success": True,
         "username": users_data["users"][key]["username"],
+    }
+
+
+# ---------- Master-key nuclear recovery: wipe all users ----------
+#
+# Same gating as the password-reset endpoint. Wipes the entire user
+# store so the next request triggers the bootstrap admin recreation.
+# This is the safety valve when the operator has lost track of every
+# user account (e.g. wiped persistent disk + lost BOOTSTRAP_ADMIN_PASSWORD).
+#
+# Rate limit: 5 attempts per IP per hour (shared counter with reset).
+
+@app.post("/api/auth/admin/wipe-users")
+def admin_wipe_users(request: Request):
+    """Delete every user from the store.
+
+    The next /api/auth/status call (or any request that triggers the
+    lazy bootstrap) will recreate the default admin. Returns the
+    number of users that were deleted.
+    """
+    master = os.environ.get("RENDER_ADMIN_KEY", "").strip()
+    if not master:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    presented = request.headers.get("X-Admin-Key", "")
+    if not presented or not hmac.compare_digest(presented, master):
+        client_ip = request.client.host if request.client else "unknown"
+        if not _check_admin_key_rate_limit(client_ip):
+            raise HTTPException(
+                status_code=429,
+                detail="Demasiados intentos. Vuelve a intentarlo más tarde.",
+            )
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    users_data = load_users()
+    deleted = len(users_data.get("users", {}))
+    users_data["users"] = {}
+    users_data["admin"] = ""
+    save_users(users_data)
+    user_store.invalidate_user_cache()  # flush the whole cache
+    # Wipe session tokens and failed-logins so no zombie session survives.
+    for path in (SESSIONS_JSON_PATH, FAILED_LOGINS_PATH, OAUTH_STATES_PATH):
+        try:
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+    print(
+        f"[AUTH] Master-key user-store wipe: deleted={deleted} "
+        f"remote={request.client.host if request.client else 'unknown'}",
+        flush=True,
+    )
+    return {
+        "success": True,
+        "deleted_users": deleted,
     }
 
 
