@@ -5220,6 +5220,8 @@ function showToast(message, kind) {
 }
 
 function showPasswordResetModal() {
+  console.warn("[DEBUG] showPasswordResetModal called from:");
+  try { console.trace(); } catch (e) { /* console.trace may not exist */ }
   var modal = document.getElementById('password-reset-modal');
   if (!modal) return;
   // Populate the server URL hint dynamically
@@ -5294,6 +5296,13 @@ function _onLoginSuccess(token, username, isAdmin) {
   //    it again. This is the safety net.
   overlay = document.getElementById('login-overlay');
   if (overlay) overlay.style.display = 'none';
+  // 4) Safety net: force-close the password-reset modal. Stale cached
+  //    ui.js versions or stray callbacks have been observed opening
+  //    this modal after a successful login, trapping the user. Hide
+  //    it here unconditionally so a clean session always lands in
+  //    the workspace, never in the modal.
+  var pwdModal = document.getElementById('password-reset-modal');
+  if (pwdModal) pwdModal.style.display = 'none';
   console.log("[DEBUG] _onLoginSuccess: done");
 }
 
