@@ -2401,6 +2401,26 @@ body:not(.light-theme) #info-view td {
   text-transform: uppercase;
 }
 
+/* "Nuevo usuario" card — dashed border, accent hover */
+.login-user-card-new {
+  background: transparent !important;
+  border: 2px dashed rgba(255,255,255,0.18) !important;
+  color: rgba(255,255,255,0.55) !important;
+  margin-top: 6px;
+}
+.login-user-card-new:hover {
+  border-color: rgba(99,102,241,0.7) !important;
+  color: rgba(255,255,255,0.95) !important;
+  background: rgba(99,102,241,0.06) !important;
+}
+.login-user-card-new-avatar {
+  background: transparent !important;
+  border: 2px dashed currentColor;
+  font-size: 26px;
+  font-weight: 400;
+  color: inherit;
+}
+
 /* Phase 2 — selected user + password */
 .login-back-btn {
   background: transparent;
@@ -2929,6 +2949,35 @@ body.light-theme .chatbot-mode-btn:hover {
   border-radius: 3px !important;
   letter-spacing: 0.05em !important;
   text-transform: uppercase !important;
+}
+
+/* "Nuevo usuario" card — dashed border, accent hover (dark theme) */
+.login-user-card-new {
+  border: 2px dashed var(--border) !important;
+  background: transparent !important;
+  color: var(--text-muted) !important;
+  margin-top: 6px;
+}
+.login-user-card-new:hover {
+  border-color: var(--accent) !important;
+  color: var(--text) !important;
+  background: rgba(99, 102, 241, 0.05) !important;
+}
+.login-user-card-new-avatar {
+  background: transparent !important;
+  border: 2px dashed currentColor !important;
+  color: inherit !important;
+  font-size: 24px !important;
+  font-weight: 400 !important;
+  box-shadow: none !important;
+}
+
+/* Hint text inside a login phase */
+.login-phase-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0 0 8px;
+  line-height: 1.4;
 }
 
 /* Password input with toggle */

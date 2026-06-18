@@ -6,7 +6,8 @@ Run via ``python -m unittest tests.test_auth -v``.
 Covers:
 - /api/auth/status
 - /api/auth/users (public, no hashes)
-- /api/auth/register (first user = admin; subsequent requires admin token)
+- /api/auth/register (first user = admin; subsequent requires admin token;
+  rejects non-admin tokens, rejects duplicate usernames)
 - /api/auth/login (success, wrong password, remember_me)
 - /api/auth/users/{username} (admin delete, self protection)
 - /api/auth/verify
@@ -258,6 +259,56 @@ class AuthFlowTest(_AuthBase):
         r = requests.get(f"{self.base}/api/config",
                          headers={"X-Session-Token": token}, timeout=5)
         self.assertEqual(r.status_code, 401)
+
+    def test_16_register_second_user_requires_admin(self):
+        """Bug fix: POST /api/auth/register must return 403 when the
+        server already has at least one user and the request has no
+        admin session token. The Phase 4 'create new user' flow on the
+        client relies on this gate."""
+        # The _test_admin user was created in setUpClass. A second
+        # registration attempt without a token must be denied.
+        r = self._register("_test_nobody", "pass1", token=None)
+        self.assertEqual(r.status_code, 403)
+
+    def test_17_register_second_user_with_admin_token_succeeds(self):
+        """Phase 4 happy path: an authenticated admin can register a
+        new user, and the response includes a session token so the
+        new user could log in immediately if desired."""
+        lr = self._login("_test_admin", "pass1")
+        self.assertEqual(lr.status_code, 200)
+        admin_token = lr.json()["token"]
+        r = self._register("_test_phase4", "pass1", token=admin_token)
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertTrue(body.get("success"))
+        self.assertEqual(body.get("username"), "_test_phase4")
+        self.assertFalse(body.get("is_admin"))
+        self.assertTrue(body.get("token"))
+
+    def test_18_register_with_non_admin_token_is_403(self):
+        """A regular (non-admin) user must not be able to register
+        others, even with a valid session token."""
+        # Create a non-admin user using the admin token, then log in
+        # as that user and try to register a third account.
+        lr = self._login("_test_admin", "pass1")
+        admin_token = lr.json()["token"]
+        r = self._register("_test_regular", "pass1", token=admin_token)
+        self.assertEqual(r.status_code, 200)
+        regular_lr = self._login("_test_regular", "pass1")
+        self.assertEqual(regular_lr.status_code, 200)
+        regular_token = regular_lr.json()["token"]
+        r = self._register("_test_should_fail", "pass1", token=regular_token)
+        self.assertEqual(r.status_code, 403)
+
+    def test_19_register_duplicate_username_is_400(self):
+        """Trying to create a user whose name already exists returns
+        400 with a clear detail message."""
+        lr = self._login("_test_admin", "pass1")
+        admin_token = lr.json()["token"]
+        # _test_admin is already in the store; register it again.
+        r = self._register("_test_admin", "pass1", token=admin_token)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("ya existe", r.json().get("detail", ""))
 
 
 class Pbkdf2BackcompatTest(_AuthBase):

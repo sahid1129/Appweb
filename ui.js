@@ -4975,7 +4975,7 @@ function _avatarInitials(name) {
 }
 
 function _loginShowPhase(phaseId) {
-  ['login-phase-users','login-phase-password','login-phase-setup'].forEach(function(id) {
+  ['login-phase-users','login-phase-password','login-phase-setup','login-phase-create-user'].forEach(function(id) {
     var el = document.getElementById(id);
     if (el) el.style.display = (id === phaseId) ? 'flex' : 'none';
   });
@@ -4985,6 +4985,10 @@ function _renderUserCards(users) {
   var grid = document.getElementById('login-users-grid');
   if (!grid) return;
   grid.innerHTML = '';
+  // Hide the "Nuevo usuario" card when there are no users yet — the
+  // setup phase (create-first-admin) takes priority in that case.
+  var newCard = document.getElementById('login-newuser-card');
+  if (newCard) newCard.style.display = (users && users.length > 0) ? '' : 'none';
   if (!users || users.length === 0) {
     grid.innerHTML = '<p style="color:rgba(255,255,255,0.35);font-size:13px;margin:0">No hay usuarios registrados.</p>';
     return;
@@ -5171,6 +5175,169 @@ function submitSetup() {
   .finally(function() {
     setLoginLoading('setup-submit-btn', null, null, null, false);
   });
+}
+
+// ============================================================
+// Create new user flow (Phase 4)
+// ============================================================
+// Flow:
+//   1) User clicks the "+ Nuevo usuario" card in login-phase-users.
+//   2) We switch to login-phase-create-user and ask for admin creds.
+//   3) createUserAuth() calls POST /api/auth/login with the admin user
+//      and stores the resulting token in sessionStorage under
+//      'app_admin_token' (separate from the regular session token so
+//      it can never be confused with the new user's session).
+//   4) createUserSubmit() calls POST /api/auth/register with
+//      X-Session-Token: <admin_token> and a new username/password.
+//   5) On success, we refresh /api/auth/users and pop a toast.
+
+function enterCreateUserFlow() {
+  // Reset transient state and switch to the create-user phase.
+  sessionStorage.removeItem('app_admin_token');
+  var form  = document.getElementById('create-user-form');
+  var errEl = document.getElementById('create-user-error');
+  var nameI = document.getElementById('create-user-admin-name');
+  var pwI   = document.getElementById('create-user-admin-pw');
+  if (form)  form.style.display  = 'none';
+  if (errEl) errEl.textContent    = '';
+  if (nameI) nameI.value          = '';
+  if (pwI)   pwI.value            = '';
+  _loginShowPhase('login-phase-create-user');
+  if (nameI) setTimeout(function () { nameI.focus(); }, 100);
+}
+
+function exitCreateUserFlow() {
+  // Clear the admin token and the in-progress form, go back to phase 1.
+  sessionStorage.removeItem('app_admin_token');
+  var form  = document.getElementById('create-user-form');
+  var errEl = document.getElementById('create-user-error');
+  var nameI = document.getElementById('create-user-name');
+  var dispI = document.getElementById('create-user-display');
+  var pwI   = document.getElementById('create-user-pw');
+  if (form)  form.style.display  = 'none';
+  if (errEl) errEl.textContent    = '';
+  if (nameI) nameI.value          = '';
+  if (dispI) dispI.value          = '';
+  if (pwI)   pwI.value            = '';
+  // Refresh the user list (in case a previous flow succeeded) and
+  // re-render the cards so any newly created user is visible.
+  _loginShowPhase('login-phase-users');
+  fetch(API_BASE_URL + '/api/auth/users')
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      window._loginUsers = (data && data.users) || [];
+      _renderUserCards(window._loginUsers);
+    })
+    .catch(function () { /* ignore — phase already shown */ });
+}
+
+function createUserAuth() {
+  var nameI = document.getElementById('create-user-admin-name');
+  var pwI   = document.getElementById('create-user-admin-pw');
+  var btn   = document.getElementById('create-user-auth-btn');
+  var errEl = document.getElementById('create-user-error');
+  var form  = document.getElementById('create-user-form');
+  if (!nameI || !pwI || !errEl) return;
+  errEl.textContent = '';
+  var username = (nameI.value || '').trim();
+  var password = pwI.value || '';
+  if (!username) { errEl.textContent = 'Introduce el usuario administrador.'; return; }
+  if (!password) { errEl.textContent = 'Introduce la contraseña del administrador.'; return; }
+
+  setLoginLoading('create-user-auth-btn', 'create-user-auth-btn', 'create-user-auth-btn', null, true);
+
+  fetch(API_BASE_URL + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: username, password: password, remember_me: false })
+  })
+    .then(function (r) {
+      if (r.ok) return r.json();
+      return r.json().then(function (d) {
+        throw new Error(d.detail || 'No se pudo autenticar al administrador.');
+      });
+    })
+    .then(function (res) {
+      if (!res || !res.success || !res.token) {
+        throw new Error('Respuesta inesperada del servidor.');
+      }
+      if (!res.is_admin) {
+        throw new Error('Solo un administrador puede crear nuevos usuarios.');
+      }
+      // Persist the admin token in a dedicated key so it never collides
+      // with the eventual user session.
+      sessionStorage.setItem('app_admin_token', res.token);
+      // Reveal the new-user form and prefill nothing — the admin will
+      // type the new username / display name / password.
+      if (form) form.style.display = '';
+      var newName = document.getElementById('create-user-name');
+      if (newName) setTimeout(function () { newName.focus(); }, 100);
+    })
+    .catch(function (err) {
+      errEl.textContent = err.message || 'Error de autenticación.';
+    })
+    .finally(function () {
+      setLoginLoading('create-user-auth-btn', null, null, null, false);
+    });
+}
+
+function createUserSubmit() {
+  var nameI = document.getElementById('create-user-name');
+  var dispI = document.getElementById('create-user-display');
+  var pwI   = document.getElementById('create-user-pw');
+  var btn   = document.getElementById('create-user-submit-btn');
+  var errEl = document.getElementById('create-user-error');
+  if (!nameI || !pwI || !errEl) return;
+  errEl.textContent = '';
+  var username = (nameI.value || '').trim();
+  var display  = (dispI && dispI.value || '').trim();
+  var password = pwI.value || '';
+  if (username.length < 2) { errEl.textContent = 'El usuario debe tener al menos 2 caracteres.'; return; }
+  if (password.length < 4) { errEl.textContent = 'La contraseña debe tener al menos 4 caracteres.'; return; }
+
+  var adminToken = sessionStorage.getItem('app_admin_token');
+  if (!adminToken) {
+    errEl.textContent = 'La sesión de administrador expiró. Vuelve a iniciar sesión.';
+    var form = document.getElementById('create-user-form');
+    if (form) form.style.display = 'none';
+    var nameA = document.getElementById('create-user-admin-name');
+    if (nameA) setTimeout(function () { nameA.focus(); }, 100);
+    return;
+  }
+
+  setLoginLoading('create-user-submit-btn', 'create-user-submit-btn', 'create-user-submit-btn', null, true);
+
+  fetch(API_BASE_URL + '/api/auth/register', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Session-Token': adminToken
+    },
+    body: JSON.stringify({
+      username: username,
+      password: password,
+      display_name: display || username
+    })
+  })
+    .then(function (r) {
+      if (r.ok) return r.json();
+      return r.json().then(function (d) {
+        throw new Error(d.detail || 'No se pudo crear el usuario.');
+      });
+    })
+    .then(function (res) {
+      if (!res || !res.success) throw new Error('Respuesta inesperada del servidor.');
+      // Pop a toast on the overlay (best-effort) and bounce back to
+      // the user selector so the new card appears in the grid.
+      try { showToast('Usuario "' + username + '" creado.', 'success'); } catch (_) {}
+      exitCreateUserFlow();
+    })
+    .catch(function (err) {
+      errEl.textContent = err.message || 'Error al crear el usuario.';
+    })
+    .finally(function () {
+      setLoginLoading('create-user-submit-btn', null, null, null, false);
+    });
 }
 
 // ============================================================
