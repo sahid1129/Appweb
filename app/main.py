@@ -1866,7 +1866,6 @@ def admin_wipe_users(request: Request):
     }
 
 
-@app.post("/api/auth/register")
 @app.get("/api/auth/admin/help")
 def admin_help():
     """Diagnostic endpoint for the master-key recovery flow.
