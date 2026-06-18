@@ -5227,12 +5227,34 @@ function showPasswordResetModal() {
   // Populate the server URL hint dynamically
   var urlSpan = document.getElementById('modal-server-url');
   if (urlSpan) urlSpan.textContent = window.location.origin;
-  modal.style.display = 'flex';
+  modal.style.setProperty('display', 'flex', 'important');
+  _installPasswordResetModalDismissHandlers();
 }
 
 function closePasswordResetModal() {
   var modal = document.getElementById('password-reset-modal');
-  if (modal) modal.style.display = 'none';
+  if (modal) modal.style.setProperty('display', 'none', 'important');
+}
+
+var _pwdModalDismissBound = false;
+function _installPasswordResetModalDismissHandlers() {
+  if (_pwdModalDismissBound) return;
+  _pwdModalDismissBound = true;
+  // Close on click outside the .login-modal (i.e. on the backdrop)
+  document.addEventListener('click', function (e) {
+    var modal = document.getElementById('password-reset-modal');
+    if (!modal) return;
+    if (modal.style.display === 'none') return;
+    if (e.target === modal) closePasswordResetModal();
+  });
+  // Close on Escape
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var modal = document.getElementById('password-reset-modal');
+    if (!modal) return;
+    if (modal.style.display === 'none') return;
+    closePasswordResetModal();
+  });
 }
 
 function setBuildInfo() {
@@ -5300,9 +5322,12 @@ function _onLoginSuccess(token, username, isAdmin) {
   //    ui.js versions or stray callbacks have been observed opening
   //    this modal after a successful login, trapping the user. Hide
   //    it here unconditionally so a clean session always lands in
-  //    the workspace, never in the modal.
+  //    the workspace, never in the modal. setProperty('important')
+  //    is required because .login-modal-overlay in ui.css used to
+  //    declare `display: flex !important`, which overrode a plain
+  //    inline `display: none`.
   var pwdModal = document.getElementById('password-reset-modal');
-  if (pwdModal) pwdModal.style.display = 'none';
+  if (pwdModal) pwdModal.style.setProperty('display', 'none', 'important');
   console.log("[DEBUG] _onLoginSuccess: done");
 }
 

@@ -411,7 +411,21 @@ async def dynamic_auth_middleware(request: Request, call_next):
         if has_any_user:
             session_token = request.headers.get("x-session-token") or request.query_params.get("token")
             if not session_token or not verify_session_token(session_token):
-                return JSONResponse(status_code=401, content={"detail": "Unauthorized: Invalid or missing session token"})
+                # CORS-safe 401: include the origin in Access-Control-Allow-Origin
+                # so the browser exposes the 401 to JS (and we can detect it
+                # on the client). Without this header, CORS hides the 401 and
+                # the client sees a generic "Network Error" forever.
+                origin = request.headers.get("origin") or "*"
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Unauthorized: Invalid or missing session token"},
+                    headers={
+                        "Access-Control-Allow-Origin": origin,
+                        "Access-Control-Allow-Credentials": "true",
+                        "Access-Control-Allow-Methods": "*",
+                        "Access-Control-Allow-Headers": "*",
+                    },
+                )
                 
     # Extract GitHub Token
     token = request.headers.get("x-github-token")
@@ -1305,9 +1319,9 @@ async def events_stream(request: Request):
     # headers, so we accept the token via ?token=<hex> as well as the header.
     token = request.headers.get("x-session-token") or request.query_params.get("token")
     if not token or not verify_session_token(token):
-        return JSONResponse(
+        raise HTTPException(
             status_code=401,
-            content={"detail": "Unauthorized: Invalid or missing session token"},
+            detail="Unauthorized: Invalid or missing session token",
         )
 
     async def event_generator() -> AsyncGenerator[str, None]:

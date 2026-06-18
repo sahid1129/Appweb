@@ -3091,17 +3091,22 @@ body.light-theme .chatbot-mode-btn:hover {
    Password reset modal
    ============================================ */
 .login-modal-overlay {
-  position: fixed !important;
-  inset: 0 !important;
-  background: rgba(0, 0, 0, 0.7) !important;
-  backdrop-filter: blur(4px) !important;
-  -webkit-backdrop-filter: blur(4px) !important;
-  z-index: 10000 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  padding: 20px !important;
-  animation: login-modal-fade 0.15s ease !important;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: login-modal-fade 0.15s ease;
+}
+.login-modal-overlay[hidden],
+.login-modal-overlay[style*="display: none"],
+.login-modal-overlay[style*="display:none"] {
+  display: none !important;
 }
 @keyframes login-modal-fade {
   from { opacity: 0; }

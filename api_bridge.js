@@ -1322,6 +1322,67 @@ window.QWebChannel = QWebChannelMock;
       return;
     }
 
+    // Pre-flight check: verify the token is still valid BEFORE opening
+    // an EventSource. If the server returns 401, we drop the token and
+    // never open the SSE. This avoids the previous loop where CORS-blocked
+    // 401s were counted as "transient" and triggered an exponential
+    // backoff reconnect storm. EventSource cannot read HTTP status
+    // codes, so we use a regular fetch with no-cors + manual status check
+    // via a CORS-friendly ping endpoint. /api/auth/verify is public-ish
+    // (it returns success/401) and is what the login flow already uses.
+    const verifyUrl = `${API_BASE_URL}/api/auth/verify`;
+    fetch(verifyUrl, {
+      method: 'GET',
+      headers: { 'X-Session-Token': token },
+      cache: 'no-store'
+    })
+      .then(function (r) {
+        if (r.status === 401) {
+          console.warn('[SSE] Token rejected by /api/auth/verify (401). Dropping session.');
+          _teardownSse();
+          _updateStatusBadge('disconnected');
+          sessionStorage.removeItem('app_session_token');
+          localStorage.removeItem('app_session_token');
+          if (typeof showLoginOverlay === 'function') {
+            showLoginOverlay();
+          } else {
+            var overlay = document.getElementById('login-overlay');
+            if (overlay) overlay.style.display = 'flex';
+          }
+          return null;
+        }
+        if (!r.ok) {
+          // Transient server-side issue: back off and retry.
+          console.warn('[SSE] Pre-flight returned', r.status, '— backing off.');
+          if (_sseActive) {
+            if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
+            _sseReconnectTimer = setTimeout(function () {
+              if (_sseActive) _connect();
+            }, _sseReconnectDelay);
+            _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, SSE_MAX_DELAY);
+          }
+          return null;
+        }
+        return r.json();
+      })
+      .then(function (res) {
+        if (!res || !res.success) return;
+        _openEventSource(token);
+      })
+      .catch(function (err) {
+        console.warn('[SSE] Pre-flight failed (network):', err && err.message);
+        // Network blip — back off and retry, do NOT count as auth failure.
+        if (_sseActive) {
+          if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
+          _sseReconnectTimer = setTimeout(function () {
+            if (_sseActive) _connect();
+          }, _sseReconnectDelay);
+          _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, SSE_MAX_DELAY);
+        }
+      });
+  }
+
+  function _openEventSource(token) {
     const url = `${API_BASE_URL}/api/events/stream?token=${encodeURIComponent(token)}`;
     _sseSource = new EventSource(url);
 
@@ -1334,7 +1395,6 @@ window.QWebChannel = QWebChannelMock;
     };
 
     _sseSource.onmessage = function (e) {
-      // Generic "data:" messages
       try {
         const evt = JSON.parse(e.data);
         _handleEvent(evt);
@@ -1350,50 +1410,21 @@ window.QWebChannel = QWebChannelMock;
     });
 
     _sseSource.onerror = function () {
-      // EventSource does not expose the HTTP status code directly. We use
-      // readyState to distinguish: 0 = CONNECTING, 1 = OPEN, 2 = CLOSED.
-      // A 401 from the backend closes the stream with readyState=2 and
-      // no "open" event, so we count consecutive failures and give up
-      // after SSE_MAX_AUTH_FAILURES to avoid hammering the server with
-      // an invalid token.
-      const wasOpen = (_sseSource && _sseSource.readyState === 2);
-      if (wasOpen) {
-        _sseAuthFailures += 1;
-        console.warn('[SSE] Auth failure', _sseAuthFailures, '/', SSE_MAX_AUTH_FAILURES);
-        if (_sseAuthFailures >= SSE_MAX_AUTH_FAILURES) {
-          console.warn('[SSE] Giving up after repeated 401. The session token is invalid or the server was redeployed. Showing login overlay.');
-          _teardownSse();
-          _updateStatusBadge('disconnected');
-          // Drop the bad token so the user is forced to re-authenticate.
-          sessionStorage.removeItem('app_session_token');
-          localStorage.removeItem('app_session_token');
-          if (typeof showLoginOverlay === 'function') {
-            showLoginOverlay();
-          } else {
-            var overlay = document.getElementById('login-overlay');
-            if (overlay) overlay.style.display = 'flex';
-          }
-          return;
-        }
-      } else {
-        // Network blip — reset the auth-failure counter.
-        _sseAuthFailures = 0;
-      }
-
-      console.warn('[SSE] Connection lost. Scheduling reconnect in', _sseReconnectDelay, 'ms');
-      if (_sseSource) {
-        _sseSource.close();
-        _sseSource = null;
-      }
+      // EventSource does not expose the HTTP status code directly. If we
+      // get here after the pre-flight verified the token, the connection
+      // died for a network reason (server restart, proxy timeout, etc).
+      // We still back off and retry, but we do NOT immediately tear
+      // down the session: the next pre-flight will catch a real 401.
+      if (!_sseSource) return;
+      try { _sseSource.close(); } catch (_) {}
+      _sseSource = null;
       _updateStatusBadge('reconnecting');
-
       if (_sseReconnectTimer) clearTimeout(_sseReconnectTimer);
       _sseReconnectTimer = setTimeout(function () {
         if (_sseActive) _connect();
       }, _sseReconnectDelay);
-
-      // Exponential backoff
       _sseReconnectDelay = Math.min(_sseReconnectDelay * 2, SSE_MAX_DELAY);
+      console.warn('[SSE] Stream error. Reconnecting in', _sseReconnectDelay, 'ms');
     };
   }
 
